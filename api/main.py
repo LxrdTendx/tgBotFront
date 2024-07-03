@@ -1,0 +1,496 @@
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, sessionmaker
+from pydantic import BaseModel, Field
+from typing import List, Optional, Union
+from datetime import datetime
+import shutil
+
+DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgFrontBrusnika"
+Base = declarative_base()
+
+# Database models
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization = Column(String, index=True)
+    is_general_contractor = Column(Boolean, default=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(String, unique=True, index=True)
+    full_name = Column(String)
+    is_authorized = Column(Boolean, default=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+
+    organization = relationship("Organization", back_populates="users")
+
+
+Organization.users = relationship("User", order_by=User.id, back_populates="organization")
+
+
+class WorkType(Base):
+    __tablename__ = "worktypes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+
+
+class Object(Base):
+    __tablename__ = "objects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+
+
+class BlockSection(Base):
+    __tablename__ = "blocksections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    object_id = Column(Integer, ForeignKey("objects.id"))
+    name = Column(String, unique=True, index=True)
+    number_of_floors = Column(Integer)
+
+    object = relationship("Object", back_populates="block_sections")
+
+
+Object.block_sections = relationship("BlockSection", order_by=BlockSection.id, back_populates="object")
+
+
+class FrontTransfer(Base):
+    __tablename__ = "fronttransfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"))
+    object_id = Column(Integer, ForeignKey("objects.id"))
+    work_type_id = Column(Integer, ForeignKey("worktypes.id"))
+    block_section_id = Column(Integer, ForeignKey("blocksections.id"))
+    floor = Column(String)
+    status = Column(String)
+    photo1 = Column(String, nullable=True)
+    photo2 = Column(String, nullable=True)
+    photo3 = Column(String, nullable=True)
+    photo4 = Column(String, nullable=True)
+    photo5 = Column(String, nullable=True)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remarks = Column(String, nullable=True)
+    next_work_type_id = Column(Integer, ForeignKey("worktypes.id"), nullable=True)
+    boss_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    approval_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    photo_ids = Column(JSON, nullable=True, default=list)
+    sender_chat_id = Column(String)
+
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="sent_transfers")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="received_transfers")
+    next_work_type = relationship("WorkType", foreign_keys=[next_work_type_id])
+    boss = relationship("User", foreign_keys=[boss_id])
+
+
+User.sent_transfers = relationship("FrontTransfer", foreign_keys=[FrontTransfer.sender_id], back_populates="sender")
+User.received_transfers = relationship("FrontTransfer", foreign_keys=[FrontTransfer.receiver_id], back_populates="receiver")
+
+
+# Pydantic models
+class OrganizationBase(BaseModel):
+    organization: str
+    is_general_contractor: bool
+
+
+class OrganizationCreate(OrganizationBase):
+    pass
+
+
+class OrganizationUpdate(OrganizationBase):
+    pass
+
+
+class OrganizationResponse(OrganizationBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class UserBase(BaseModel):
+    chat_id: Union[str, int]
+    full_name: str
+    is_authorized: bool
+    organization_id: Optional[int] = None
+
+
+class UserCreate(UserBase):
+    pass
+
+
+class UserUpdate(UserBase):
+    pass
+
+
+class UserResponse(UserBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class WorkTypeBase(BaseModel):
+    name: str
+
+
+class WorkTypeCreate(WorkTypeBase):
+    pass
+
+
+class WorkTypeUpdate(WorkTypeBase):
+    pass
+
+
+class WorkTypeResponse(WorkTypeBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class ObjectBase(BaseModel):
+    name: str
+
+
+class ObjectCreate(ObjectBase):
+    pass
+
+
+class ObjectUpdate(ObjectBase):
+    pass
+
+
+class ObjectResponse(ObjectBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class BlockSectionBase(BaseModel):
+    object_id: int
+    name: str
+    number_of_floors: int
+
+
+class BlockSectionCreate(BlockSectionBase):
+    pass
+
+
+class BlockSectionUpdate(BlockSectionBase):
+    pass
+
+
+class BlockSectionResponse(BlockSectionBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class FrontTransferBase(BaseModel):
+    sender_id: int
+    object_id: int
+    work_type_id: int
+    block_section_id: int
+    floor: str
+    status: str
+    photo1: Optional[str] = None
+    photo2: Optional[str] = None
+    photo3: Optional[str] = None
+    photo4: Optional[str] = None
+    photo5: Optional[str] = None
+    receiver_id: Optional[int] = None
+    remarks: Optional[str] = None
+    next_work_type_id: Optional[int] = None
+    boss_id: Optional[int] = None
+    created_at: datetime
+    approval_at: Optional[datetime] = None
+    photo_ids: Optional[List[str]] = Field(default_factory=list)
+    sender_chat_id: str
+
+
+class FrontTransferCreate(FrontTransferBase):
+    pass
+
+
+class FrontTransferUpdate(FrontTransferBase):
+    pass
+
+
+class FrontTransferResponse(FrontTransferBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+# FastAPI setup
+app = FastAPI()
+
+# Database session
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
+
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# CRUD operations
+def get_organization(db: Session, organization_id: int):
+    return db.query(Organization).filter(Organization.id == organization_id).first()
+
+
+def get_user(db: Session, user_id: int):
+    return db.query(User).filter(User.id == user_id).first()
+
+
+def get_user_by_chat_id(db: Session, chat_id: Union[str, int]):
+    return db.query(User).filter(User.chat_id == str(chat_id)).first()
+
+
+def get_work_type(db: Session, work_type_id: int):
+    return db.query(WorkType).filter(WorkType.id == work_type_id).first()
+
+
+def get_object(db: Session, object_id: int):
+    return db.query(Object).filter(Object.id == object_id).first()
+
+
+def get_block_section(db: Session, block_section_id: int):
+    return db.query(BlockSection).filter(BlockSection.id == block_section_id).first()
+
+
+def get_front_transfer(db: Session, front_transfer_id: int):
+    return db.query(FrontTransfer).filter(FrontTransfer.id == front_transfer_id).first()
+
+
+# Routes
+@app.post("/organizations/", response_model=OrganizationResponse)
+def create_organization(organization: OrganizationCreate, db: Session = Depends(get_db)):
+    db_organization = Organization(**organization.dict())
+    db.add(db_organization)
+    db.commit()
+    db.refresh(db_organization)
+    return db_organization
+
+
+@app.get("/organizations/", response_model=List[OrganizationResponse])
+def read_organizations(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    organizations = db.query(Organization).offset(skip).limit(limit).all()
+    return organizations
+
+
+@app.get("/organizations/{organization_id}", response_model=OrganizationResponse)
+def read_organization(organization_id: int, db: Session = Depends(get_db)):
+    organization = get_organization(db, organization_id=organization_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return organization
+
+
+@app.post("/users/", response_model=UserResponse, status_code=201)
+def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = User(**user.dict())
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+@app.get("/users/", response_model=List[UserResponse])
+def read_users(skip: int = 0, limit: int = 10, organization_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(User)
+    if organization_id is not None:
+        query = query.filter(User.organization_id == organization_id)
+    users = query.offset(skip).limit(limit).all()
+    return users
+
+
+@app.get("/users/{user_id}", response_model=UserResponse)
+def read_user(user_id: int, db: Session = Depends(get_db)):
+    user = get_user(db, user_id=user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.get("/users/{chat_id}", response_model=UserResponse)
+def read_user_by_chat_id(chat_id: Union[str, int], db: Session = Depends(get_db)):
+    user = get_user_by_chat_id(db, chat_id=chat_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@app.put("/users/{user_id}", response_model=UserResponse)
+def update_user(user_id: int, user: UserUpdate, db: Session = Depends(get_db)):
+    db_user = get_user(db, user_id=user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    for key, value in user.dict().items():
+        setattr(db_user, key, value)
+
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.get("/users/chat/{chat_id}", response_model=UserResponse)
+def read_user_by_chat_id(chat_id: Union[str, int], db: Session = Depends(get_db)):
+    user = get_user_by_chat_id(db, chat_id=chat_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+@app.post("/worktypes/", response_model=WorkTypeResponse)
+def create_work_type(work_type: WorkTypeCreate, db: Session = Depends(get_db)):
+    db_work_type = WorkType(**work_type.dict())
+    db.add(db_work_type)
+    db.commit()
+    db.refresh(db_work_type)
+    return db_work_type
+
+
+@app.get("/worktypes/", response_model=List[WorkTypeResponse])
+def read_work_types(skip: int = 0, limit: int = 87, db: Session = Depends(get_db)):
+    work_types = db.query(WorkType).offset(skip).limit(limit).all()
+    return work_types
+
+
+@app.get("/worktypes/{work_type_id}", response_model=WorkTypeResponse)
+def read_work_type(work_type_id: int, db: Session = Depends(get_db)):
+    work_type = get_work_type(db, work_type_id=work_type_id)
+    if work_type is None:
+        raise HTTPException(status_code=404, detail="WorkType not found")
+    return work_type
+
+
+@app.post("/objects/", response_model=ObjectResponse)
+def create_object(object: ObjectCreate, db: Session = Depends(get_db)):
+    db_object = Object(**object.dict())
+    db.add(db_object)
+    db.commit()
+    db.refresh(db_object)
+    return db_object
+
+
+@app.get("/objects/", response_model=List[ObjectResponse])
+def read_objects(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    objects = db.query(Object).offset(skip).limit(limit).all()
+    return objects
+
+
+@app.get("/objects/{object_id}", response_model=ObjectResponse)
+def read_object(object_id: int, db: Session = Depends(get_db)):
+    object = get_object(db, object_id=object_id)
+    if object is None:
+        raise HTTPException(status_code=404, detail="Object not found")
+    return object
+
+@app.get("/objects/{object_id}/blocksections/", response_model=List[BlockSectionResponse])
+def read_block_sections_by_object(object_id: int, db: Session = Depends(get_db)):
+    object = get_object(db, object_id=object_id)
+    if object is None:
+        raise HTTPException(status_code=404, detail="Object not found")
+    return object.block_sections
+@app.post("/blocksections/", response_model=BlockSectionResponse)
+def create_block_section(block_section: BlockSectionCreate, db: Session = Depends(get_db)):
+    db_block_section = BlockSection(**block_section.dict())
+    db.add(db_block_section)
+    db.commit()
+    db.refresh(db_block_section)
+    return db_block_section
+
+
+@app.get("/blocksections/", response_model=List[BlockSectionResponse])
+def read_block_sections(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    block_sections = db.query(BlockSection).offset(skip).limit(limit).all()
+    return block_sections
+
+
+@app.get("/blocksections/{block_section_id}", response_model=BlockSectionResponse)
+def read_block_section(block_section_id: int, db: Session = Depends(get_db)):
+    block_section = get_block_section(db, block_section_id=block_section_id)
+    if block_section is None:
+        raise HTTPException(status_code=404, detail="BlockSection not found")
+    return block_section
+
+
+@app.get("/objects/{object_id}/block_sections/", response_model=List[BlockSectionResponse])
+def read_block_sections_by_object(object_id: int, db: Session = Depends(get_db)):
+    object = get_object(db, object_id=object_id)
+    if object is None:
+        raise HTTPException(status_code=404, detail="Object not found")
+    return object.block_sections
+
+
+@app.post("/fronttransfers/", response_model=FrontTransferResponse)
+def create_front_transfer(front_transfer: FrontTransferCreate, db: Session = Depends(get_db)):
+    db_front_transfer = FrontTransfer(**front_transfer.dict())
+    db.add(db_front_transfer)
+    db.commit()
+    db.refresh(db_front_transfer)
+    return db_front_transfer
+
+
+@app.get("/fronttransfers/", response_model=List[FrontTransferResponse])
+def read_front_transfers(skip: int = 0, limit: int = 10, status: Optional[str] = None, db: Session = Depends(get_db)):
+    if status:
+        front_transfers = db.query(FrontTransfer).filter(FrontTransfer.status == status).offset(skip).limit(limit).all()
+    else:
+        front_transfers = db.query(FrontTransfer).offset(skip).limit(limit).all()
+    return front_transfers
+
+
+@app.get("/fronttransfers/{front_transfer_id}", response_model=FrontTransferResponse)
+def read_front_transfer(front_transfer_id: int, db: Session = Depends(get_db)):
+    front_transfer = get_front_transfer(db, front_transfer_id=front_transfer_id)
+    if front_transfer is None:
+        raise HTTPException(status_code=404, detail="FrontTransfer not found")
+    return front_transfer
+
+
+@app.put("/fronttransfers/{front_transfer_id}", response_model=FrontTransferResponse)
+def update_front_transfer(front_transfer_id: int, front_transfer: FrontTransferUpdate, db: Session = Depends(get_db)):
+    db_front_transfer = get_front_transfer(db, front_transfer_id=front_transfer_id)
+    if db_front_transfer is None:
+        raise HTTPException(status_code=404, detail="FrontTransfer not found")
+
+    for key, value in front_transfer.dict().items():
+        setattr(db_front_transfer, key, value)
+
+    db.commit()
+    db.refresh(db_front_transfer)
+    return db_front_transfer
+
+
+@app.post("/uploadfile/")
+async def create_upload_file(file: UploadFile = File(...)):
+    file_location = f"files/{file.filename}"
+    with open(file_location, "wb+") as file_object:
+        shutil.copyfileobj(file.file, file_object)
+    return {"info": "file saved successfully"}
+
+
+# Запуск FastAPI
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
