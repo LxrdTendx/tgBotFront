@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
@@ -18,6 +18,8 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     organization = Column(String, index=True)
     is_general_contractor = Column(Boolean, default=False)
+    work_types_ids = Column(JSON, nullable=True, default=list)  # Добавляем новое поле
+
 
 
 class User(Base):
@@ -47,6 +49,7 @@ class Object(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
+    work_types_ids = Column(JSON, nullable=True, default=list)  # Добавляем новое поле
 
 
 class BlockSection(Base):
@@ -101,6 +104,8 @@ User.received_transfers = relationship("FrontTransfer", foreign_keys=[FrontTrans
 class OrganizationBase(BaseModel):
     organization: str
     is_general_contractor: bool
+    work_types_ids: Optional[List[int]] = Field(default_factory=list)  # Добавляем новое поле
+
 
 
 class OrganizationCreate(OrganizationBase):
@@ -161,6 +166,8 @@ class WorkTypeResponse(WorkTypeBase):
 
 class ObjectBase(BaseModel):
     name: str
+    work_types_ids: Optional[List[int]] = Field(default_factory=list)  # Добавляем новое поле
+
 
 
 class ObjectCreate(ObjectBase):
@@ -306,6 +313,18 @@ def read_organization(organization_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Organization not found")
     return organization
 
+@app.put("/organizations/{organization_id}", response_model=OrganizationResponse)
+def update_organization(organization_id: int, organization: OrganizationUpdate, db: Session = Depends(get_db)):
+    db_organization = get_organization(db, organization_id=organization_id)
+    if db_organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    for key, value in organization.dict().items():
+        setattr(db_organization, key, value)
+
+    db.commit()
+    db.refresh(db_organization)
+    return db_organization
 
 @app.post("/users/", response_model=UserResponse, status_code=201)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
@@ -368,9 +387,16 @@ def create_work_type(work_type: WorkTypeCreate, db: Session = Depends(get_db)):
     return db_work_type
 
 
+# CRUD operation для получения WorkType по списку ID
+def get_worktypes_by_ids(db: Session, ids: List[int]):
+    return db.query(WorkType).filter(WorkType.id.in_(ids)).all()
+
 @app.get("/worktypes/", response_model=List[WorkTypeResponse])
-def read_work_types(skip: int = 0, limit: int = 87, db: Session = Depends(get_db)):
-    work_types = db.query(WorkType).offset(skip).limit(limit).all()
+def read_work_types(ids: List[int] = Query(None), db: Session = Depends(get_db)):
+    if ids:
+        work_types = get_worktypes_by_ids(db, ids)
+    else:
+        work_types = db.query(WorkType).all()
     return work_types
 
 
@@ -390,6 +416,18 @@ def create_object(object: ObjectCreate, db: Session = Depends(get_db)):
     db.refresh(db_object)
     return db_object
 
+@app.put("/objects/{object_id}", response_model=ObjectResponse)
+def update_object(object_id: int, object: ObjectUpdate, db: Session = Depends(get_db)):
+    db_object = get_object(db, object_id=object_id)
+    if db_object is None:
+        raise HTTPException(status_code=404, detail="Object not found")
+
+    for key, value in object.dict().items():
+        setattr(db_object, key, value)
+
+    db.commit()
+    db.refresh(db_object)
+    return db_object
 
 @app.get("/objects/", response_model=List[ObjectResponse])
 def read_objects(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):

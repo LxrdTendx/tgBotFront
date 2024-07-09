@@ -1,6 +1,3 @@
-from datetime import datetime
-
-import requests
 import telegram
 from telegram.constants import ParseMode
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, \
@@ -8,9 +5,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import logging
 import json
+import requests
+from openpyxl import load_workbook
+from openpyxl.styles import Font
+import win32com.client as win32
 import os
-import asyncio
-import httpx
+from datetime import datetime
+import aiohttp
+from typing import List
 
 # Включаем логирование
 logging.basicConfig(
@@ -62,9 +64,11 @@ async def choose_organization(update: Update, context: ContextTypes.DEFAULT_TYPE
     response = requests.get(f'{DJANGO_API_URL}organizations/')
     if response.status_code == 200:
         organizations = response.json()
+        # Исключаем организацию с id = 3
+        filtered_organizations = [org for org in organizations if org['id'] != 3]
         # Создание кнопок в колонку
         keyboard = [
-            [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in organizations
+            [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in filtered_organizations
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
@@ -380,6 +384,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             await update.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
         context.user_data['stage'] = None
+
+
+    elif stage and stage.startswith('delete_error_'):
+        front_id = int(stage.split('_')[2])
+        delete_reason = text  # Получаем комментарий
+
+        # Обновляем статус фронта на "deleted"
+        front_response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
+        if front_response.status_code == 200:
+            front_data = front_response.json()
+            updated_data = front_data
+            updated_data.update({
+                'status': 'deleted',
+                'remarks': delete_reason
+            })
+
+            response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=updated_data)
+            if response.status_code == 200:
+                sender_chat_id = front_data['sender_chat_id']
+
+                # Уведомление отправителя
+                notification_text = (
+                    f"\U0000274C Генеральный подрядчик удалил ваш фронт работ по причине:\n\n"
+                    f"*Комментарий:* _{delete_reason}_"
+                )
+                await context.bot.send_message(
+                    chat_id=sender_chat_id,
+                    text=notification_text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                await update.message.reply_text('Фронт успешно удален и уведомление отправлено.')
+            else:
+                await update.message.reply_text(f'Ошибка при удалении фронта: {response.text}')
+        else:
+            await update.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
+        context.user_data['stage'] = None
+
     else:
         response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
         if response.status_code == 404:
@@ -424,7 +466,7 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
     else:
         keyboard = [
             [InlineKeyboardButton("Передать фронт", callback_data='transfer')],
-            [InlineKeyboardButton("Принять фронт", callback_data='accept')],
+            [InlineKeyboardButton("Принять фронт", callback_data='accept_fronts')],
         ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -437,20 +479,143 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
     context.user_data['main_menu_message_id'] = message.message_id
 
 
+async def show_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
+    await query.message.delete()
+    response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
+    if response.status_code == 200:
+        front = response.json()
+        sender_chat_id = front['sender_chat_id']
+
+        sender_response = requests.get(f'{DJANGO_API_URL}users/chat/{sender_chat_id}/')
+        if sender_response.status_code == 200:
+            sender_full_name = sender_response.json()["full_name"]
+
+            object_name = requests.get(f'{DJANGO_API_URL}objects/{front["object_id"]}/').json().get('name', 'неизвестно')
+            work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/').json().get('name', 'неизвестно')
+            block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/').json().get('name', 'неизвестно')
+            work_type_new_name = requests.get(f'{DJANGO_API_URL}worktypes/{front["next_work_type_id"]}/').json().get('name', 'неизвестно')
+
+
+            message_text = (
+                f"*Отправитель:* {sender_full_name}\n\n"
+                f"*Объект:* {object_name}\n"
+                f"*Вид работ:* {work_type_name}\n"
+                f"*Блок/Секция:* {block_section_name}\n"
+                f"*Этаж:* {front['floor']}\n\n"
+                f"*Новый вид работ:* {work_type_new_name}\n"
+                f"*Дата передачи (МСК):* {front['created_at']}"
+            )
+
+            media_group = []
+            photo_ids = front.get('photo_ids', [])
+            for idx, photo_id in enumerate(photo_ids):
+                if photo_id:
+                    if idx == 0:
+                        media_group.append(InputMediaPhoto(media=photo_id, caption=message_text, parse_mode=ParseMode.MARKDOWN))
+                    else:
+                        media_group.append(InputMediaPhoto(media=photo_id))
+
+            keyboard = [
+                [InlineKeyboardButton("\U00002705 Принять", callback_data=f"accept_front_{front_id}"),
+                 InlineKeyboardButton("\U0000274C Отклонить", callback_data=f"decline_front_{front_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            if media_group:
+                await context.bot.send_media_group(chat_id=query.message.chat.id, media=media_group)
+                await context.bot.send_message(
+                    chat_id=query.message.chat.id,
+                    text="Выберите действие:",
+                    reply_markup=reply_markup
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=query.message.chat.id,
+                    text=message_text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                await context.bot.send_message(
+                    chat_id=query.message.chat.id,
+                    text="Выберите действие:",
+                    reply_markup=reply_markup
+                )
+        else:
+            await query.message.reply_text("Ошибка при получении данных отправителя.")
+    else:
+        await query.message.reply_text("Ошибка при получении данных фронта.")
+
+async def list_accept_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.callback_query.from_user.id
+
+    # Получаем информацию о пользователе по chat_id
+    response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+    if response.status_code == 200:
+        user_data = response.json()
+        receiver_id = user_data['id']
+
+        # Получаем все фронты с нужными параметрами
+        response = requests.get(f'{DJANGO_API_URL}fronttransfers/?status=on_consideration')
+        if response.status_code == 200:
+            fronts = response.json()
+            # Фильтруем фронты по receiver_id
+            filtered_fronts = [front for front in fronts if front['receiver_id'] == receiver_id]
+
+            if filtered_fronts:
+                keyboard = []
+                for front in filtered_fronts:
+                    # Получаем имена объектов, видов работ и блоков/секции
+                    object_name = requests.get(f'{DJANGO_API_URL}objects/{front["object_id"]}/').json().get('name', 'неизвестно')
+                    work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/').json().get('name', 'неизвестно')
+                    block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/').json().get('name', 'неизвестно')
+
+                    button_text = f"{object_name} - {work_type_name} - {block_section_name} - {front['floor']}"
+                    callback_data = f"accept_{front['id']}"
+                    keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.callback_query.message.reply_text("Выберите фронт для принятия:", reply_markup=reply_markup)
+            else:
+                await update.callback_query.message.reply_text("Нет фронтов для принятия.")
+        else:
+            await update.callback_query.message.reply_text("Ошибка при получении фронтов.")
+    else:
+        await update.callback_query.message.reply_text("Ошибка при получении данных пользователя.")
+
 async def choose_work_type(query: Update, context: ContextTypes.DEFAULT_TYPE, object_id: int) -> None:
     await query.message.delete()  # Удаление предыдущего сообщения
-    response = requests.get(f'{DJANGO_API_URL}worktypes/')
-    if response.status_code == 200:
-        work_types = response.json()
-        keyboard = [
-            [InlineKeyboardButton(work['name'], callback_data=f'work_{work["id"]}')] for work in work_types
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text('Выберите тип работ:', reply_markup=reply_markup)
-        context.user_data['object_id'] = object_id
-        context.user_data['stage'] = 'choose_work_type'
+
+    user_chat_id = query.message.chat.id
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}')
+
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        organization_id = user_data['organization_id']
+
+        if organization_id is None:
+            await query.message.reply_text('Ошибка: пользователь не принадлежит ни одной организации.')
+            return
+
+        common_work_types_ids = await get_common_work_types(object_id, organization_id)
+
+        if common_work_types_ids:
+            ids_query = "&".join([f"ids={id}" for id in common_work_types_ids])
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{DJANGO_API_URL}worktypes/?{ids_query}') as response:
+                    if response.status == 200:
+                        work_types = await response.json()
+                        keyboard = [
+                            [InlineKeyboardButton(work['name'], callback_data=f'work_{work["id"]}')] for work in work_types
+                        ]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
+                        context.user_data['object_id'] = object_id
+                        context.user_data['stage'] = 'choose_work_type'
+                    else:
+                        await query.message.reply_text('Ошибка при получении списка типов работ. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Нет доступных видов работ для выбранного объекта и вашей организации.')
     else:
-        await query.message.reply_text('Ошибка при получении списка типов работ. Попробуйте снова.')
+        await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
 
 
 async def choose_block_section(query: Update, context: ContextTypes.DEFAULT_TYPE, work_type_id: int) -> None:
@@ -753,12 +918,12 @@ async def view_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, 
 
             message_text = (
                 f"*Отправитель:* {sender_full_name}\n"
-                f"*Организация:* {org_response}\n"
+                f"*Организация:* {org_response}\n\n"
                 f"*Объект:* {object_name}\n"
                 f"*Вид работ:* {work_type_name}\n"
                 f"*Блок/Секция:* {block_section_name}\n"
-                f"*Этаж:* {front['floor']}\n"
-                f"*Дата передачи (МСК):* {front['created_at']}"
+                f"*Этаж:* {front['floor']}\n\n"
+                f"*Дата передачи (МСК):* {datetime.fromisoformat(front['created_at']).strftime('%d.%m.%Y')}"
             )
 
             # Список InputMediaPhoto для отправки группой
@@ -769,6 +934,7 @@ async def view_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, 
                 [InlineKeyboardButton("\U0000274C Доработка", callback_data=f"rework_{front_id}"),
                  InlineKeyboardButton("👥 Передать", callback_data=f"transfer_{front_id}"),
                  InlineKeyboardButton("\U00002705 Принять", callback_data=f"approve_{front_id}")],
+                [InlineKeyboardButton("\U0001F6AB Удалить/Ошибка", callback_data=f"delete_error_{front_id}")],
                 [InlineKeyboardButton("К списку фронтов", callback_data='view_fronts')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -818,6 +984,154 @@ async def handle_rework(query: Update, context: ContextTypes.DEFAULT_TYPE, front
 
 
 
+#Сделать async
+async def fetch(session, url):
+    async with session.get(url) as response:
+        return await response.json()
+
+
+async def generate_pdf(front_id: int) -> str:
+    API_URL = 'http://127.0.0.1:8000'
+    async with aiohttp.ClientSession() as session:
+        # Получение данных фронта
+        front = await fetch(session, f'{API_URL}/fronttransfers/{front_id}')
+        if not front:
+            raise Exception(f'Ошибка при получении данных фронта: {front.status}')
+
+        # Получение необходимых данных для замены
+        object_name = (await fetch(session, f'{API_URL}/objects/{front["object_id"]}')).get('name', 'неизвестно')
+        block_section_name = (await fetch(session, f'{API_URL}/blocksections/{front["block_section_id"]}')).get('name', 'неизвестно')
+        boss_name = (await fetch(session, f'{API_URL}/users/{front["boss_id"]}')).get('full_name', 'неизвестно')
+        receiver = await fetch(session, f'{API_URL}/users/{front["sender_id"]}')
+        receiver_name = receiver.get('full_name', 'неизвестно')
+        organization_name = (await fetch(session, f'{API_URL}/organizations/{receiver["organization_id"]}')).get('organization', 'неизвестно')
+        work_type = (await fetch(session, f'{API_URL}/worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
+
+        # Извлечение дня и месяца из поля approval_at
+        approval_at = datetime.fromisoformat(front['approval_at'])
+        day = approval_at.day
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        month = months[approval_at.month - 1]
+
+        # Открытие Excel-файла
+        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний.xlsx')
+        workbook = load_workbook(excel_path)
+        worksheet = workbook.active
+
+        # Установка фиксированной ширины для первых трех колонок
+        worksheet.column_dimensions['A'].width = 25
+        worksheet.column_dimensions['B'].width = 25
+        worksheet.column_dimensions['C'].width = 28
+
+        # Замена плейсхолдеров в документе и установка размера шрифта
+        def replace_placeholder(ws, placeholder, replacement):
+            font = Font(size=10)
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
+                        cell.value = cell.value.replace(placeholder, replacement)
+                        cell.font = font
+
+        replace_placeholder(worksheet, 'objectname', object_name)
+        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
+        replace_placeholder(worksheet, 'bossname', boss_name)
+        replace_placeholder(worksheet, 'sendername', receiver_name)
+        replace_placeholder(worksheet, 'floor', front['floor'])
+
+        replace_placeholder(worksheet, 'orgname', organization_name)
+        replace_placeholder(worksheet, 'day', str(day))
+        replace_placeholder(worksheet, 'month', month)
+        replace_placeholder(worksheet, 'worktype', work_type)
+
+        # Сохранение обновленного документа в буфер
+        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
+        workbook.save(temp_excel_path)
+        # print("Документ сохранен: ", temp_excel_path)
+
+        # Конвертация Excel в PDF
+        excel_app = win32.Dispatch('Excel.Application')
+        workbook = excel_app.Workbooks.Open(temp_excel_path)
+        pdf_output_path = os.path.abspath(
+            f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
+        workbook.ExportAsFixedFormat(0, pdf_output_path)
+        workbook.Close(False)
+        excel_app.Quit()
+
+        # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
+        return pdf_output_path
+
+async def generate_pdf_reverse(front_id: int) -> str:
+    API_URL = 'http://127.0.0.1:8000'
+    async with aiohttp.ClientSession() as session:
+        # Получение данных фронта
+        front = await fetch(session, f'{API_URL}/fronttransfers/{front_id}')
+        if not front:
+            raise Exception(f'Ошибка при получении данных фронта: {front.status}')
+
+        # Получение необходимых данных для замены
+        object_name = (await fetch(session, f'{API_URL}/objects/{front["object_id"]}')).get('name', 'неизвестно')
+        block_section_name = (await fetch(session, f'{API_URL}/blocksections/{front["block_section_id"]}')).get('name', 'неизвестно')
+        boss_name = (await fetch(session, f'{API_URL}/users/{front["boss_id"]}')).get('full_name', 'неизвестно')
+        receiver = await fetch(session, f'{API_URL}/users/{front["sender_id"]}')
+        receiver_name = receiver.get('full_name', 'неизвестно')
+        organization_name = (await fetch(session, f'{API_URL}/organizations/{receiver["organization_id"]}')).get('organization', 'неизвестно')
+        work_type = (await fetch(session, f'{API_URL}/worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
+
+        # Извлечение дня и месяца из поля approval_at
+        approval_at = datetime.fromisoformat(front['approval_at'])
+        day = approval_at.day
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        month = months[approval_at.month - 1]
+
+        # Открытие Excel-файла
+        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний_reverse.xlsx')
+        workbook = load_workbook(excel_path)
+        worksheet = workbook.active
+
+        # Установка фиксированной ширины для первых трех колонок
+        worksheet.column_dimensions['A'].width = 25
+        worksheet.column_dimensions['B'].width = 25
+        worksheet.column_dimensions['C'].width = 28
+
+        # Замена плейсхолдеров в документе и установка размера шрифта
+        def replace_placeholder(ws, placeholder, replacement):
+            font = Font(size=10)
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
+                        cell.value = cell.value.replace(placeholder, replacement)
+                        cell.font = font
+
+        replace_placeholder(worksheet, 'objectname', object_name)
+        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
+        replace_placeholder(worksheet, 'bossname', boss_name)
+        replace_placeholder(worksheet, 'sendername', receiver_name)
+        replace_placeholder(worksheet, 'floor', front['floor'])
+
+        replace_placeholder(worksheet, 'orgname', organization_name)
+        replace_placeholder(worksheet, 'day', str(day))
+        replace_placeholder(worksheet, 'month', month)
+        replace_placeholder(worksheet, 'worktype', work_type)
+
+        # Сохранение обновленного документа в буфер
+        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
+        workbook.save(temp_excel_path)
+        # print("Документ сохранен: ", temp_excel_path)
+
+        # Конвертация Excel в PDF
+        excel_app = win32.Dispatch('Excel.Application')
+        workbook = excel_app.Workbooks.Open(temp_excel_path)
+        pdf_output_path = os.path.abspath(
+            f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
+        workbook.ExportAsFixedFormat(0, pdf_output_path)
+        workbook.Close(False)
+        excel_app.Quit()
+
+        # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
+        return pdf_output_path
+
 async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
     try:
         await query.message.delete()
@@ -849,7 +1163,8 @@ async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front
                 'floor': front['floor'],
                 'sender_id': front['sender_id'],
                 'created_at': front['created_at'],
-                'sender_chat_id': front['sender_chat_id']
+                'sender_chat_id': front['sender_chat_id'],
+                'photo_ids': front['photo_ids']
             }
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=update_data)
             if response.status_code == 200:
@@ -890,12 +1205,28 @@ async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front
                     f"*Этаж:* {front.get('floor', 'неизвестно')}\n"
                     f"*Вид работ:* {work_type_name}\n"
                 )
-                await context.bot.send_message(
-                    chat_id=sender_chat_id,
-                    text=notification_text,
-                    parse_mode=ParseMode.MARKDOWN
+
+                pdf_path = await generate_pdf(front_id) # Генерация PDF
+
+                # Отправка PDF файла ген. директору
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=open(pdf_path, 'rb'),
+                    caption='Фронт работ успешно принят.',
+                    reply_markup=reply_markup_kb_main
                 )
-                await query.message.reply_text('Фронт успешно принят.', reply_markup=reply_markup_kb_main)
+
+
+
+                await context.bot.send_document(
+                    chat_id=sender_chat_id,
+                    caption=notification_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    document=open(pdf_path, 'rb'),
+
+                )
+                # await query.message.reply_text('Фронт успешно принят.',reply_markup=reply_markup_kb_main)
+
                 # Получаем данные пользователя для отображения главного меню
                 response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
                 if response.status_code == 200:
@@ -911,7 +1242,6 @@ async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front
             await query.message.reply_text('Ошибка при получении данных генерального подрядчика. Попробуйте снова.')
     else:
         await query.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
-
 
 
 async def handle_transfer(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
@@ -974,17 +1304,40 @@ async def choose_transfer_user(query: Update, context: ContextTypes.DEFAULT_TYPE
 async def choose_transfer_work_type(query: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
     await query.message.delete()
     context.user_data['transfer_user_id'] = user_id
-    response = requests.get(f'{DJANGO_API_URL}worktypes/')
-    if response.status_code == 200:
-        work_types = response.json()
-        keyboard = [
-            [InlineKeyboardButton(work['name'], callback_data=f'transfer_work_{work["id"]}')] for work in work_types
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
-        context.user_data['stage'] = 'choose_transfer_work_type'
+
+    # Получаем ID организации из контекста
+    org_id = context.user_data.get('transfer_org_id')
+
+    # Получаем ID фронта из контекста и объект по его ID
+    front_id = context.user_data.get('transfer_front_id')
+    front_response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
+
+    if front_response.status_code == 200:
+        front_data = front_response.json()
+        object_id = front_data['object_id']
+
+        # Получаем пересечения видов работ для объекта и организации
+        common_work_types_ids = await get_common_work_types(object_id, org_id)
+
+        if common_work_types_ids:
+            ids_query = "&".join([f"ids={id}" for id in common_work_types_ids])
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{DJANGO_API_URL}worktypes/?{ids_query}') as response:
+                    if response.status == 200:
+                        work_types = await response.json()
+                        keyboard = [
+                            [InlineKeyboardButton(work['name'], callback_data=f'transfer_work_{work["id"]}')] for work
+                            in work_types
+                        ]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await query.message.reply_text('Выберите новый вид работ:', reply_markup=reply_markup)
+                        context.user_data['stage'] = 'choose_transfer_work_type'
+                    else:
+                        await query.message.reply_text('Ошибка при получении списка типов работ. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Нет доступных видов работ для выбранного объекта и вашей организации.')
     else:
-        await query.message.reply_text('Ошибка при получении списка видов работ. Попробуйте снова.')
+        await query.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
 
 
 async def confirm_transfer(query: Update, context: ContextTypes.DEFAULT_TYPE, work_type_id: int) -> None:
@@ -1080,14 +1433,14 @@ async def confirm_transfer(query: Update, context: ContextTypes.DEFAULT_TYPE, wo
                                 sender_full_name = sender_data.get('full_name', 'Неизвестный отправитель')
 
                                 message_text = (
-                                    f"*Вам передан фронт работ*\n"
+                                    f"*Вам передан фронт работ*\n\n"
                                     f"*Отправитель:* {sender_full_name}\n"
-                                    f"*Организация:* {organization_name}\n"
+                                    f"*Организация:* {organization_name}\n\n"
                                     f"*Объект:* {object_name}\n"
                                     f"*Вид работ:* {current_work_type_name}\n"
                                     f"*Блок/Секция:* {block_section_name}\n"
-                                    f"*Этаж:* {transfer['floor']}\n"
-                                    f"*Дата передачи (МСК):* {transfer['created_at']}\n"
+                                    f"*Этаж:* {transfer['floor']}\n\n"
+                                    f"*Дата передачи (МСК):* {datetime.fromisoformat(transfer['created_at']).strftime('%d.%m.%Y')}\n"
                                     f"*Новый вид работ:* {work_type_name}"
                                 )
 
@@ -1142,7 +1495,94 @@ async def confirm_transfer(query: Update, context: ContextTypes.DEFAULT_TYPE, wo
         await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
 
 
+async def fetch_data(session, url):
+    async with session.get(url) as response:
+        if response.status != 200:
+            raise Exception(f'Ошибка при получении данных: {response.status}')
+        return await response.json()
+
+async def generate_pdf_triple(front_id: int) -> str:
+    async with aiohttp.ClientSession() as session:
+        # Получение данных фронта
+        front = await fetch_data(session, f'{DJANGO_API_URL}fronttransfers/{front_id}/')
+
+        # Получение необходимых данных для замены
+        object_name = (await fetch_data(session, f'{DJANGO_API_URL}objects/{front["object_id"]}/'))['name']
+        block_section_name = (await fetch_data(session, f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/'))['name']
+        boss_name = (await fetch_data(session, f'{DJANGO_API_URL}users/{front["boss_id"]}/'))['full_name']
+
+        sender = await fetch_data(session, f'{DJANGO_API_URL}users/{front["sender_id"]}/')
+        sender_name = sender['full_name']
+        organization_id_sender = sender['organization_id']
+
+        receiver = await fetch_data(session, f'{DJANGO_API_URL}users/{front["receiver_id"]}/')
+        receiver_name = receiver['full_name']
+        organization_id_receiver = receiver['organization_id']
+
+        organization_name1 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_sender}/'))['organization']
+        organization_name2 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_receiver}/'))['organization']
+        work_type = (await fetch(session, f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
+
+
+        # Извлечение дня и месяца из поля approval_at
+        approval_at = datetime.fromisoformat(front['approval_at'])
+        day = approval_at.day
+
+        # Русские названия месяцев
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        month = months[approval_at.month - 1]
+
+        # Открытие Excel-файла
+        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_трехсторонний.xlsx')
+        workbook = load_workbook(excel_path)
+        worksheet = workbook.active
+
+        # Установка фиксированной ширины для первых трех колонок
+        worksheet.column_dimensions['A'].width = 25
+        worksheet.column_dimensions['B'].width = 25
+        worksheet.column_dimensions['C'].width = 28
+
+        # Замена плейсхолдеров в документе и установка размера шрифта
+        def replace_placeholder(ws, placeholder, replacement):
+            font = Font(size=10)  # Создаем шрифт с размером 10
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
+                        cell.value = cell.value.replace(placeholder, replacement)
+                        cell.font = font
+
+        replace_placeholder(worksheet, 'objectname', object_name)
+        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
+        replace_placeholder(worksheet, 'bossname', boss_name)
+        replace_placeholder(worksheet, 'sendername', sender_name)
+        replace_placeholder(worksheet, 'receivername', receiver_name)
+        replace_placeholder(worksheet, 'floor', front['floor'])
+        replace_placeholder(worksheet, 'orgname1', organization_name1)
+        replace_placeholder(worksheet, 'orgname2', organization_name2)
+        replace_placeholder(worksheet, 'day', str(day))
+        replace_placeholder(worksheet, 'month', month)
+        replace_placeholder(worksheet, 'worktype', work_type)
+
+        # Сохранение обновленного документа в буфер
+        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
+        workbook.save(temp_excel_path)
+        # print("Документ сохранен: ", temp_excel_path)
+
+        # Конвертация Excel в PDF
+        excel_app = win32.Dispatch('Excel.Application')
+        workbook = excel_app.Workbooks.Open(temp_excel_path)
+        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_трехсторонний.pdf')
+        workbook.ExportAsFixedFormat(0, pdf_output_path)
+        workbook.Close(False)
+        excel_app.Quit()
+
+        # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
+        return pdf_output_path
+
+
 async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
+    user_id = query.message.chat.id
     await query.edit_message_reply_markup(reply_markup=None)
     response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
     if response.status_code == 200:
@@ -1154,7 +1594,101 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
             await query.message.reply_text('Ошибка: получатель фронта не указан.')
             return
 
-        # Создание нового фронта с новым статусом
+        # Если next_work_type_id пустой, изменяем статус принимаемого фронта на in_process
+        if not front['next_work_type_id']:
+            # Обновляем данные фронта
+            old_front_data = {
+                'sender_id': front['sender_id'],
+                'object_id': front['object_id'],
+                'work_type_id': front['work_type_id'],
+                'block_section_id': front['block_section_id'],
+                'floor': front['floor'],
+                'status': 'in_process',  # Обновляем статус на in_process
+                'photo1': front['photo1'],
+                'photo2': front['photo2'],
+                'photo3': front['photo3'],
+                'photo4': front['photo4'],
+                'photo5': front['photo5'],
+                'receiver_id': front['receiver_id'],
+                'remarks': front['remarks'],
+                'next_work_type_id': front['next_work_type_id'],
+                'boss_id': front['boss_id'],
+                'created_at': front['created_at'],
+                'approval_at': datetime.now().isoformat(),  # Обновляем дату
+                'photo_ids': front['photo_ids'],
+                'sender_chat_id': front['sender_chat_id'],
+            }
+
+            response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=old_front_data)
+            if response.status_code == 200:
+                # Получаем chat_id босса по его id
+                boss_id = front['boss_id']
+                boss_response = requests.get(f'{DJANGO_API_URL}users/{boss_id}/')
+                if boss_response.status_code == 200:
+                    boss_chat_id = boss_response.json()['chat_id']
+                else:
+                    await query.message.reply_text('Ошибка при получении chat_id ген подрядчика.')
+                    return
+
+                # Получаем chat_id создателя по его id
+                sender_id = front['sender_id']
+                sender_response = requests.get(f'{DJANGO_API_URL}users/{sender_id}/')
+                if sender_response.status_code == 200:
+                    sender_chat_id = sender_response.json()['chat_id']
+                else:
+                    await query.message.reply_text('Ошибка при получении chat_id создателя фронта.')
+                    return
+
+                # Получение данных для уведомления
+                object_response = requests.get(f'{DJANGO_API_URL}objects/{front["object_id"]}/')
+                block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/')
+                work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/')
+
+                if object_response.status_code == 200:
+                    object_name = object_response.json().get('name', 'Неизвестный объект')
+                else:
+                    object_name = 'Неизвестный объект'
+
+                if block_section_response.status_code == 200:
+                    block_section_name = block_section_response.json().get('name', 'Неизвестный блок/секция')
+                else:
+                    block_section_name = 'Неизвестный блок/секция'
+
+                if work_type_response.status_code == 200:
+                    work_type_name = work_type_response.json().get('name', 'Неизвестный вид работ')
+                else:
+                    work_type_name = 'Неизвестный вид работ'
+
+                pdf_path = await generate_pdf_reverse(front_id)
+
+                notification_text = (
+                    f"\U00002705 Фронт работ успешно принят:"
+                    f"\n\n*Объект:* {object_name}\n"
+                    f"*Секция/Блок:* {block_section_name}\n"
+                    f"*Этаж:* {front['floor']}\n"
+                    f"*Вид работ:* {work_type_name}\n\n"
+                    f"*Организация:* {work_type_name}\n\n"
+                )
+
+                await context.bot.send_document(
+                    chat_id=boss_chat_id,
+                    caption=notification_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    document=open(pdf_path, 'rb')
+                )
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=open(pdf_path, 'rb'),
+                    caption='Фронт успешно принят. Нажмите /start для быстрой передачи фронт работ',
+                    reply_markup=reply_markup_kb_main
+                )
+
+
+            else:
+                await query.message.reply_text(f'Ошибка при обновлении статуса фронта: {response.text}', reply_markup=reply_markup_kb_main)
+            return
+
+        # Создание нового фронта с новым статусом, если next_work_type_id не пустой
         new_front_data = {
             'sender_id': front['receiver_id'],  # Принимающий становится отправителем
             'sender_chat_id': user_chat_id,
@@ -1242,6 +1776,8 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                 else:
                     work_type_name = 'Неизвестный вид работ'
 
+                pdf_path = await generate_pdf_triple(front_id)
+
                 notification_text = (
                     f"\U00002705 Фронт работ успешно принят:"
                     f"\n\n*Объект:* {object_name}\n"
@@ -1250,28 +1786,47 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                     f"*Вид работ:* {work_type_name}\n"
                 )
 
-                await context.bot.send_message(
-                    chat_id=boss_chat_id,
-                    text=notification_text,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                await context.bot.send_message(
-                    chat_id=sender_chat_id,
-                    text=notification_text,
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                # Отправка уведомлений в зависимости от условия
+                if sender_id == front['receiver_id']:
+                    await context.bot.send_document(
+                        chat_id=boss_chat_id,
+                        caption=notification_text,
+                        parse_mode=ParseMode.MARKDOWN,
+                        document=open(pdf_path, 'rb')
+                    )
+                    await context.bot.send_document(
+                        chat_id=user_id,
+                        document=open(pdf_path, 'rb'),
+                        caption='Фронт успешно принят. Нажмите /start для быстрой передачи фронт работ',
+                        reply_markup=reply_markup_kb_main
+                    )
+                else:
+                    await context.bot.send_document(
+                        chat_id=boss_chat_id,
+                        caption=notification_text,
+                        parse_mode=ParseMode.MARKDOWN,
+                        document=open(pdf_path, 'rb')
+                    )
+                    await context.bot.send_document(
+                        chat_id=user_id,
+                        document=open(pdf_path, 'rb'),
+                        caption='Фронт успешно принят. Нажмите /start для быстрой передачи фронт работ',
+                        reply_markup=reply_markup_kb_main
+                    )
+                    await context.bot.send_document(
+                        chat_id=sender_chat_id,
+                        caption=notification_text,
+                        parse_mode=ParseMode.MARKDOWN,
+                        document=open(pdf_path, 'rb'),
+                    )
 
-                await query.message.reply_text('Фронт успешно принят. Нажмите /start для быстрой передачи фронт работ.',
-                                               reply_markup=reply_markup_kb_main)
             else:
-                await query.message.reply_text(f'Ошибка при обновлении статуса старого фронта: {response.text}',
-                                               reply_markup=reply_markup_kb_main)
+                await query.message.reply_text(f'Ошибка при обновлении статуса старого фронта: {response.text}', reply_markup=reply_markup_kb_main)
         else:
-            await query.message.reply_text(f'Ошибка при создании нового фронта: {response.text}',
-                                           reply_markup=reply_markup_kb_main)
+            await query.message.reply_text(f'Ошибка при создании нового фронта: {response.text}', reply_markup=reply_markup_kb_main)
     else:
-        await query.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.',
-                                       reply_markup=reply_markup_kb_main)
+        await query.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.', reply_markup=reply_markup_kb_main)
+
 
 
 async def decline_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
@@ -1312,7 +1867,7 @@ async def notify_general_contractors(context: ContextTypes.DEFAULT_TYPE, transfe
                 message_text = (
                     f"*Создан новый фронт работ*\n"
                     f"*Отправитель:* {sender_full_name}\n"
-                    f"*Организация:* {sender_organization}\n"
+                    f"*Организация:* {sender_organization}\n\n"
                     f"*Объект:* {transfer_data['object_name']}\n"
                     f"*Вид работ:* {transfer_data['work_type_name']}\n"
                     f"*Блок/Секция:* {transfer_data['block_section_name']}\n"
@@ -1331,11 +1886,18 @@ async def notify_general_contractors(context: ContextTypes.DEFAULT_TYPE, transfe
         logger.error(f"Ошибка при получении списка пользователей: {response.status_code}")
 
 
-async def choose_existing_front(query: Update, context: ContextTypes.DEFAULT_TYPE, fronts: list) -> None:
+async def choose_existing_front(query: Update, context: ContextTypes.DEFAULT_TYPE, fronts: list, object_id: int) -> None:
     await query.message.delete()  # Удаление предыдущего сообщения
 
+    user_id = query.from_user.id
+    filtered_fronts = [front for front in fronts if front['sender_chat_id'] == str(user_id) and front['object_id'] == object_id]
+
+    if not filtered_fronts:
+        await query.message.reply_text("Нет фронтов для продолжения передачи на выбранном объекте.")
+        return
+
     keyboard = []
-    for front in fronts:
+    for front in filtered_fronts:
         # Получаем названия объектов, видов работ и блоков/секции
         object_name = "неизвестно"
         work_type_name = "неизвестно"
@@ -1370,6 +1932,8 @@ async def choose_existing_front(query: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text('Выберите фронт для продолжения передачи:', reply_markup=reply_markup)
     context.user_data['stage'] = 'choose_existing_front'
+    context.user_data['object_id'] = object_id
+
 
 
 async def handle_existing_front_selection(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
@@ -1406,6 +1970,28 @@ async def handle_existing_front_selection(query: Update, context: ContextTypes.D
     else:
         await query.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
 
+
+
+
+async def handle_delete_error(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
+    await query.message.reply_text('Пожалуйста, введите комментарий для удаления фронта:')
+    context.user_data['stage'] = f'delete_error_{front_id}'
+
+# Функция для получения пересечения work_types_ids
+async def get_common_work_types(object_id: int, org_id: int) -> List[int]:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f'{DJANGO_API_URL}objects/{object_id}') as response_obj, \
+                   session.get(f'{DJANGO_API_URL}organizations/{org_id}') as response_org:
+
+            if response_obj.status == 200 and response_org.status == 200:
+                object_data = await response_obj.json()
+                organization_data = await response_org.json()
+                object_work_types = set(object_data.get('work_types_ids', []))
+                organization_work_types = set(organization_data.get('work_types_ids', []))
+                common_work_types = list(object_work_types.intersection(organization_work_types))
+                return common_work_types
+            else:
+                return []
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -1512,7 +2098,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if response.status_code == 200:
             fronts = response.json()
             if fronts:
-                await choose_existing_front(query, context, fronts)
+                await choose_existing_front(query, context, fronts, object_id)
             else:
                 await choose_work_type(query, context, object_id)
         else:
@@ -1522,9 +2108,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         front_id = int(data.split('_')[2])
         await handle_existing_front_selection(query, context, front_id)
 
-    elif data == 'accept':
-        await query.edit_message_text(text="Вы выбрали 'Принять фронт'. Выполняется...")
-        # Здесь можно добавить логику для действия "Принять фронт"
+    elif data == 'accept_fronts':
+        await list_accept_fronts(update, context)
+
+
+    elif data.startswith('accept_front_'):
+        front_id = int(data.split('_')[2])
+        await accept_front(query, context, front_id)
+
+    elif data.startswith('accept_'):
+        front_id = int(data.split('_')[1])
+        await show_front_details(query, context, front_id)
 
     elif data == 'view_fronts':
         await view_fronts(update, context)
@@ -1541,9 +2135,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         front_id = int(data.split('_')[1])
         await approve_front(query, context, front_id)
 
-    elif data.startswith('accept_front_'):
+
+    elif data.startswith('delete_error_'):
         front_id = int(data.split('_')[2])
-        await accept_front(query, context, front_id)
+        await handle_delete_error(query, context, front_id)
 
     elif data.startswith('decline_front_'):
         front_id = int(data.split('_')[2])
@@ -1627,62 +2222,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
     elif data.startswith('issue_org_'):
-
         await query.message.delete()  # Удаление предыдущего сообщения
-
         org_id = int(data.split('_')[2])
-
         context.user_data['issue_org_id'] = org_id
-
         response = requests.get(f'{DJANGO_API_URL}users/')
 
         if response.status_code == 200:
-
             users = response.json()
-
             filtered_users = [user for user in users if user['organization_id'] == org_id]
 
             if filtered_users:
-
                 keyboard = [
-
                     [InlineKeyboardButton(user['full_name'], callback_data=f'issue_user_{user["chat_id"]}')] for user in
                     filtered_users
-
                 ]
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
-
                 await query.message.reply_text('Выберите пользователя:', reply_markup=reply_markup)
-
                 context.user_data['stage'] = 'issue_choose_user'
 
             else:
-
                 await query.message.reply_text('В этой организации нет доступных пользователей.')
-
         else:
-
             await query.message.reply_text('Ошибка при получении списка пользователей. Попробуйте снова.')
+
 
 
     elif data.startswith('issue_user_'):
         await query.message.delete()  # Удаление предыдущего сообщения
         user_chat_id = int(data.split('_')[2])
         context.user_data['issue_user_chat_id'] = user_chat_id
-        response = requests.get(f'{DJANGO_API_URL}worktypes/')
 
-        if response.status_code == 200:
-            work_types = response.json()
-            keyboard = [
-                [InlineKeyboardButton(work['name'], callback_data=f'issue_work_{work["id"]}')] for work in work_types
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
-            context.user_data['stage'] = 'issue_choose_work_type'
+        # Получение пересечения work_types_ids
+        common_work_types_ids = await get_common_work_types(context.user_data['issue_object_id'],
+                                                            context.user_data['issue_org_id'])
 
+        if common_work_types_ids:
+            ids_query = "&".join([f"ids={id}" for id in common_work_types_ids])
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{DJANGO_API_URL}worktypes/?{ids_query}') as response:
+                    if response.status == 200:
+                        work_types = await response.json()
+                        keyboard = [
+                            [InlineKeyboardButton(work['name'], callback_data=f'issue_work_{work["id"]}')] for work in
+                            work_types
+                        ]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
+                        context.user_data['stage'] = 'issue_choose_work_type'
+                    else:
+                        await query.message.reply_text('Ошибка при получении списка видов работ. Попробуйте снова.')
         else:
-            await query.message.reply_text('Ошибка при получении списка видов работ. Попробуйте снова.')
+            await query.message.reply_text('Нет доступных видов работ для выбранного объекта и организации.')
 
 
     elif data.startswith('issue_work_'):
@@ -1776,6 +2367,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         block_section_name = context.user_data['issue_block_section_name']
         floor_number = context.user_data['issue_floor']
 
+        boss_id = requests.get(f'{DJANGO_API_URL}users/chat/{query.from_user.id}/').json()['id']
+
+
         transfer_data = {
             'sender_id': user_id,
             'sender_chat_id': user_chat_id,
@@ -1783,9 +2377,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             'work_type_id': context.user_data['issue_work_type_id'],
             'block_section_id': context.user_data['issue_block_section_id'],
             'floor': context.user_data['issue_floor'],
-            'status': 'in_process',
+            'status': 'on_consideration',
             'created_at': datetime.now().isoformat(),
             'approval_at': datetime.now().isoformat(),
+            'receiver_id': user_id,
+            'boss_id': boss_id,
             'photos': []
 
         }
@@ -1816,7 +2412,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
 
             keyboard = [
-                [InlineKeyboardButton("Передать фронт", callback_data='transfer')],
+                [InlineKeyboardButton("Принять фронт", callback_data='accept_fronts')],
 
             ]
 
