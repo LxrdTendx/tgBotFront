@@ -19,6 +19,7 @@ class Organization(Base):
     organization = Column(String, index=True)
     is_general_contractor = Column(Boolean, default=False)
     work_types_ids = Column(JSON, nullable=True, default=list)  # Добавляем новое поле
+    object_ids = Column(JSON, nullable=True, default=list)
 
 
 
@@ -30,8 +31,11 @@ class User(Base):
     full_name = Column(String)
     is_authorized = Column(Boolean, default=False)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    object_id = Column(Integer, ForeignKey("objects.id"), nullable=True)  # Добавлено поле
+
 
     organization = relationship("Organization", back_populates="users")
+    object = relationship("Object")  # Добавлено отношение
 
 
 Organization.users = relationship("User", order_by=User.id, back_populates="organization")
@@ -100,12 +104,25 @@ User.sent_transfers = relationship("FrontTransfer", foreign_keys=[FrontTransfer.
 User.received_transfers = relationship("FrontTransfer", foreign_keys=[FrontTransfer.receiver_id], back_populates="receiver")
 
 
+class FrontWorkforce(Base):
+    __tablename__ = "frontworkforces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    front_transfer_id = Column(Integer, ForeignKey("fronttransfers.id"))
+    date = Column(DateTime, default=datetime.utcnow)
+    workforce_count = Column(Integer)
+
+    front_transfer = relationship("FrontTransfer", back_populates="workforces")
+
+
+FrontTransfer.workforces = relationship("FrontWorkforce", order_by=FrontWorkforce.id, back_populates="front_transfer")
+
 # Pydantic models
 class OrganizationBase(BaseModel):
     organization: str
     is_general_contractor: bool
     work_types_ids: Optional[List[int]] = Field(default_factory=list)  # Добавляем новое поле
-
+    object_ids: Optional[List[int]] = Field(default_factory=list)
 
 
 class OrganizationCreate(OrganizationBase):
@@ -128,6 +145,7 @@ class UserBase(BaseModel):
     full_name: str
     is_authorized: bool
     organization_id: Optional[int] = None
+    object_id: Optional[int] = None
 
 
 class UserCreate(UserBase):
@@ -243,6 +261,26 @@ class FrontTransferResponse(FrontTransferBase):
         orm_mode = True
 
 
+class FrontWorkforceBase(BaseModel):
+    front_transfer_id: int
+    date: datetime
+    workforce_count: int
+
+
+class FrontWorkforceCreate(FrontWorkforceBase):
+    pass
+
+
+class FrontWorkforceUpdate(FrontWorkforceBase):
+    pass
+
+
+class FrontWorkforceResponse(FrontWorkforceBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
 # FastAPI setup
 app = FastAPI()
 
@@ -301,7 +339,7 @@ def create_organization(organization: OrganizationCreate, db: Session = Depends(
 
 
 @app.get("/organizations/", response_model=List[OrganizationResponse])
-def read_organizations(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_organizations(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
     organizations = db.query(Organization).offset(skip).limit(limit).all()
     return organizations
 
@@ -525,6 +563,31 @@ async def create_upload_file(file: UploadFile = File(...)):
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
     return {"info": "file saved successfully"}
+
+
+
+
+@app.post("/frontworkforces/", response_model=FrontWorkforceResponse)
+def create_front_workforce(front_workforce: FrontWorkforceCreate, db: Session = Depends(get_db)):
+    db_front_workforce = FrontWorkforce(**front_workforce.dict())
+    db.add(db_front_workforce)
+    db.commit()
+    db.refresh(db_front_workforce)
+    return db_front_workforce
+
+
+@app.get("/frontworkforces/", response_model=List[FrontWorkforceResponse])
+def read_front_workforces(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    front_workforces = db.query(FrontWorkforce).offset(skip).limit(limit).all()
+    return front_workforces
+
+
+@app.get("/frontworkforces/{front_workforce_id}", response_model=FrontWorkforceResponse)
+def read_front_workforce(front_workforce_id: int, db: Session = Depends(get_db)):
+    front_workforce = db.query(FrontWorkforce).filter(FrontWorkforce.id == front_workforce_id).first()
+    if front_workforce is None:
+        raise HTTPException(status_code=404, detail="FrontWorkforce not found")
+    return front_workforce
 
 
 # Запуск FastAPI
