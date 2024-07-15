@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font
 import win32com.client as win32
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import aiohttp
 from typing import List
 from dateutil import parser
@@ -89,7 +89,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     password = context.args[0] if context.args else None
 
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
-    logger.info(f"Ответ от API при проверке пользователя: {response.status_code}, {response.text}")
+    # logger.info(f"Ответ от API при проверке пользователя: {response.status_code}, {response.text}")
     if response.status_code == 404:
         if str(password).lower() == 'secret_password':
             context.user_data['is_authorized'] = True
@@ -470,17 +470,16 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
 
     if is_general_contractor:
         keyboard = [
-            [InlineKeyboardButton("Просмотр переданных фронтов", callback_data='view_fronts')],
-            [InlineKeyboardButton("Просмотр фронтов в работе", callback_data='fronts_in_process')],
-            [InlineKeyboardButton("Выдать фронт", callback_data='issue_front')],
+            [InlineKeyboardButton("\U0001F4C4 Просмотр переданных фронтов", callback_data='view_fronts')],
+            [InlineKeyboardButton("\U0001F6E0 Просмотр фронтов в работе", callback_data='fronts_in_process')],
+            [InlineKeyboardButton("\U0001F4CB Выдать фронт", callback_data='issue_front')],
+            [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
 
         ]
     else:
         keyboard = [
-            [InlineKeyboardButton("Передать фронт", callback_data='transfer')],
-            [InlineKeyboardButton("Принять фронт", callback_data='accept_fronts')],
-            [InlineKeyboardButton("Передать численность", callback_data='workforce_transfer')],
-
+            [InlineKeyboardButton("\U0001F4C4 Фронт", callback_data='front_menu')],
+            [InlineKeyboardButton("\U0001F477 Численность", callback_data='workforce_menu')],
         ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -522,7 +521,7 @@ async def show_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, 
                 )
             else:
                 message_text = (
-                    f"*Отправитель:* {sender_full_name}\n\n"
+                    f"*Кому:* {sender_full_name}\n\n"
                     f"*Объект:* {object_name}\n"
                     f"*Вид работ:* {work_type_name}\n"
                     f"*Блок/Секция:* {block_section_name}\n"
@@ -570,7 +569,7 @@ async def show_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, 
         await query.message.reply_text("Ошибка при получении данных фронта.")
 
 async def list_accept_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.callback_query.edit_message_reply_markup(reply_markup=None)
+    await update.callback_query.message.delete()
     user_id = update.callback_query.from_user.id
 
     # Получаем информацию о пользователе по chat_id
@@ -598,7 +597,9 @@ async def list_accept_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     callback_data = f"accept_{front['id']}"
                     keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
+
                 await update.callback_query.message.reply_text("Выберите фронт для принятия:", reply_markup=reply_markup)
             else:
                 await update.callback_query.message.reply_text("Нет фронтов для принятия.")
@@ -1321,6 +1322,7 @@ async def generate_pdf_reverse(front_id: int) -> str:
 async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
     try:
         await query.message.delete()
+        await query.message.reply_text(text="Создание документа, подождите...")
     except telegram.error.BadRequest:
         logger.warning("Message to delete not found")
 
@@ -1811,6 +1813,23 @@ async def send_to_google_sheets(front_id, action='append'):
             response.raise_for_status()
             return await response.json()
 
+async def send_workforce_to_google_sheets(object_name, block_section_name, floor, work_type_name, organization_name, workforce_count, id_workforce):
+    async with aiohttp.ClientSession() as session:
+        data = {
+            "action": "workforce",  # Действие для численности
+            "A": object_name,
+            "B": block_section_name,
+            "C": floor,
+            "D": work_type_name,
+            "E": organization_name,
+            "F": workforce_count,
+            "G": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "H": id_workforce,
+        }
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
 
 async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
     user_id = query.message.chat.id
@@ -1827,6 +1846,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
 
         # Если next_work_type_id пустой, изменяем статус принимаемого фронта на in_process
         if not front['next_work_type_id']:
+            await query.edit_message_text(text="Создание документа, подождите...")
             # Обновляем данные фронта
             old_front_data = {
                 'sender_id': front['sender_id'],
@@ -1853,7 +1873,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=old_front_data)
             if response.status_code == 200:
 
-                await send_to_google_sheets(front_id)
+
                 # Получаем chat_id босса по его id
                 boss_id = front['boss_id']
                 boss_response = requests.get(f'{DJANGO_API_URL}users/{boss_id}/')
@@ -1915,6 +1935,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                     caption='Фронт успешно принят. Нажмите /start для быстрой передачи фронт работ',
                     reply_markup=reply_markup_kb_main
                 )
+                await send_to_google_sheets(front_id)
 
 
             else:
@@ -1943,6 +1964,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
             'boss_id': None,
             'photo_ids': [],
         }
+        await query.edit_message_text(text="Создание документа, подождите...")
 
         response = requests.post(f'{DJANGO_API_URL}fronttransfers/', json=new_front_data)
         if response.status_code == 200:
@@ -1973,9 +1995,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
 
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=old_front_data)
             if response.status_code == 200:
-                await send_to_google_sheets(front_id, action='update')  # Обновляем старый фронт
 
-                await send_to_google_sheets(new_front_id, action='append')
                 # Получаем chat_id босса по его id
                 boss_id = front['boss_id']
                 boss_response = requests.get(f'{DJANGO_API_URL}users/{boss_id}/')
@@ -2057,6 +2077,10 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                         parse_mode=ParseMode.MARKDOWN,
                         document=open(pdf_path, 'rb'),
                     )
+
+                await send_to_google_sheets(front_id, action='update')  # Обновляем старый фронт
+
+                await send_to_google_sheets(new_front_id, action='append')
 
             else:
                 await query.message.reply_text(f'Ошибка при обновлении статуса старого фронта: {response.text}', reply_markup=reply_markup_kb_main)
@@ -2244,110 +2268,303 @@ async def get_common_work_types(object_id: int, org_id: int) -> List[int]:
 async def handle_transfer_workforce(query: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_chat_id = query.from_user.id
     await query.message.delete()
-    response = requests.get(f'{DJANGO_API_URL}fronttransfers/?sender_chat_id={user_chat_id}&status=in_process')
 
-    if response.status_code == 200:
-        fronts = response.json()
-
-        # Фильтруем фронты, чтобы убрать те, у которых уже есть запись о численности на текущую дату
-        today = datetime.now().date()
-        response_workforce = requests.get(f'{DJANGO_API_URL}frontworkforces/')
-        if response_workforce.status_code == 200:
-            workforces = response_workforce.json()
-            fronts_without_workforce_today = [
-                front for front in fronts if not any(
-                    wf['front_transfer_id'] == front['id'] and parser.parse(wf['date']).date() == today for wf in workforces
-                )
-            ]
-
-            if fronts_without_workforce_today:
-                keyboard = []
-                for front in fronts_without_workforce_today:
-                    work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/')
-                    block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/')
-
-                    if work_type_response.status_code == 200 and block_section_response.status_code == 200:
-                        work_type_name = work_type_response.json()['name']
-                        block_section_name = block_section_response.json()['name']
-                        button_text = f"{work_type_name} - {block_section_name} - Этаж {front['floor']}"
-                        keyboard.append([InlineKeyboardButton(button_text, callback_data=f'workforce_{front["id"]}')])
-                    else:
-                        await query.message.reply_text('Ошибка при получении данных. Попробуйте снова.')
-                        return
-
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.message.reply_text('Выберите фронт для передачи численности:', reply_markup=reply_markup)
-            else:
-                await query.message.reply_text('Нет доступных фронтов для передачи численности на текущую дату.')
-                # Возвращение в главное меню
-                user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}/').json()
-                full_name = user_data.get('full_name', 'Пользователь')
-                organization_id = user_data.get('organization_id', None)
-                await send_main_menu(user_chat_id, context, full_name, organization_id)
-        else:
-            await query.message.reply_text('Ошибка при получении данных о численности. Попробуйте снова.')
-            # Возвращение в главное меню
-            user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}/').json()
-            full_name = user_data.get('full_name', 'Пользователь')
-            organization_id = user_data.get('organization_id', None)
-            await send_main_menu(user_chat_id, context, full_name, organization_id)
+    # Получаем данные организации пользователя
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}/')
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        organization_id = user_data['organization_id']
+        context.user_data['organization_id'] = organization_id
     else:
-        await query.message.reply_text('Ошибка при получении списка фронтов. Попробуйте снова.')
-        # Возвращение в главное меню
-        user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}/').json()
-        full_name = user_data.get('full_name', 'Пользователь')
-        organization_id = user_data.get('organization_id', None)
-        await send_main_menu(user_chat_id, context, full_name, organization_id)
+        await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
+        return
+
+    # Получаем объекты организации
+    response = requests.get(f'{DJANGO_API_URL}objects/')
+    if response.status_code == 200:
+        objects = response.json()
+        filtered_objects = [obj for obj in objects if organization_id in obj['work_types_ids']]
+
+        if filtered_objects:
+            keyboard = [
+                [InlineKeyboardButton(obj['name'], callback_data=f'workforce_obj_{obj["id"]}')] for obj in filtered_objects
+            ]
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
+        else:
+            await query.message.reply_text('Нет доступных объектов для данной организации.')
+    else:
+        await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
+
+async def update_workforce_in_google_sheets(workforce_id, object_id, block_section_id, floor, work_type_id, organization_id, new_workforce_count):
+    async with aiohttp.ClientSession() as session:
+        # Получение дополнительных данных
+        object_data = await get_data_from_api(session, f"/objects/{object_id}")
+        block_section_data = await get_data_from_api(session, f"/blocksections/{block_section_id}")
+        work_type_data = await get_data_from_api(session, f"/worktypes/{work_type_id}")
+        organization_data = await get_data_from_api(session, f"/organizations/{organization_id}")
+
+        data = {
+            "action": "update_workforce",
+            "A": object_data['name'],
+            "B": block_section_data['name'],
+            "C": floor,
+            "D": work_type_data['name'],
+            "E": organization_data['organization'],
+            "F": new_workforce_count,
+            "G": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "H": workforce_id,  # Используется для поиска записи в Google Sheets
+        }
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
 
 async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get('expecting_workforce_count'):
         try:
             workforce_count = int(update.message.text)
-            front_id = context.user_data['workforce_front_id']
+            object_id = context.user_data['workforce_object_id']
+            block_section_id = context.user_data['workforce_block_section_id']
+            floor = context.user_data['workforce_floor']
+            if floor == 'roof':
+                floor = 'Кровля'
+            work_type_id = context.user_data['workforce_work_type_id']
+            organization_id = context.user_data['organization_id']
+            user_id = update.message.from_user.id
 
-            # Получаем данные о фронте, чтобы включить их в финальное сообщение
-            front_response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
-            if front_response.status_code == 200:
-                front = front_response.json()
-                work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/')
-                block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/')
-
-                if work_type_response.status_code == 200 and block_section_response.status_code == 200:
-                    work_type_name = work_type_response.json()['name']
-                    block_section_name = block_section_response.json()['name']
-                    floor = front['floor']
-
-                    workforce_data = {
-                        'front_transfer_id': front_id,
-                        'date': datetime.now().isoformat(),
-                        'workforce_count': workforce_count
-                    }
-
-                    response = requests.post(f'{DJANGO_API_URL}frontworkforces/', json=workforce_data)
-
-                    if response.status_code == 200:
-                        await update.message.reply_text(
-                            f"Численность на фронт: {work_type_name} {block_section_name} Этаж {floor} успешно передана."
-                        )
-                        # Возвращение в главное меню
-                        user_data = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat.id}/').json()
-                        full_name = user_data.get('full_name', 'Пользователь')
-                        organization_id = user_data.get('organization_id', None)
-                        await send_main_menu(update.message.chat.id, context, full_name, organization_id)
-                    else:
-                        await update.message.reply_text(f'Ошибка при передаче численности: {response.text}')
-                else:
-                    await update.message.reply_text('Ошибка при получении данных о фронте. Попробуйте снова.')
+            # Получаем id пользовтаеля в базе
+            user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+            if user_response.status_code == 200:
+                user_name = user_response.json()['id']
             else:
-                await update.message.reply_text('Ошибка при получении данных о фронте. Попробуйте снова.')
+                await update.message.reply_text('Ошибка при получении id пользователя')
+                return
 
+            # Получаем имя блока/секции
+            block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
+            if block_section_response.status_code == 200:
+                block_section_name = block_section_response.json()['name']
+                context.user_data['workforce_block_section_name'] = block_section_name
+            else:
+                await update.message.reply_text('Ошибка при получении данных блока/секции. Попробуйте снова.')
+                return
+
+            # Получаем имя объекта
+            object_response = requests.get(f'{DJANGO_API_URL}objects/{object_id}/')
+            if object_response.status_code == 200:
+                object_name = object_response.json()['name']
+            else:
+                await update.message.reply_text('Ошибка при получении данных объекта. Попробуйте снова.')
+                return
+
+            # Получаем имя вида работ
+            work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{work_type_id}/')
+            if work_type_response.status_code == 200:
+                work_type_name = work_type_response.json()['name']
+                context.user_data['workforce_work_type_name'] = work_type_name
+            else:
+                await update.message.reply_text('Ошибка при получении данных вида работ. Попробуйте снова.')
+                return
+
+            # Получаем имя организации
+            organization_response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+            if organization_response.status_code == 200:
+                organization_name = organization_response.json()['organization']
+            else:
+                await update.message.reply_text('Ошибка при получении данных организации. Попробуйте снова.')
+                return
+
+
+
+            workforce_data = {
+                'object_id': object_id,
+                'block_section_id': block_section_id,
+                'floor': floor,
+                'work_type_id': work_type_id,
+                'organization_id': organization_id,
+                'workforce_count': workforce_count,
+                'date': datetime.now().isoformat(),
+                'user_id': user_name
+            }
+
+            response = requests.post(f'{DJANGO_API_URL}frontworkforces/', json=workforce_data)
+
+            if response.status_code == 200:
+                id_workforce = response.json()['id']
+                await update.message.reply_text(
+                    f"Численность успешно передана на вид работ: \n"
+                    f"{context.user_data['workforce_work_type_name']}\n"
+                    f"{context.user_data['workforce_block_section_name']} Этаж {floor}",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton(f"Повторить {context.user_data['workforce_work_type_name']}",
+                                               callback_data='repeat_workforce')],
+                        [InlineKeyboardButton("Назад", callback_data='main_menu')]]
+                    )
+                )
+                # Отправка данных в Google Sheets
+                await send_workforce_to_google_sheets(
+                    object_name,
+                    block_section_name,
+                    floor,
+                    work_type_name,
+                    organization_name,
+                    workforce_count,
+                    id_workforce,
+                )
+            else:
+                await update.message.reply_text(f'Ошибка при передаче численности: {response.text}')
         except ValueError:
             await update.message.reply_text('Пожалуйста, введите корректное число.')
 
         context.user_data['expecting_workforce_count'] = False
+
+    elif context.user_data.get('expecting_new_workforce_count'):
+        try:
+            new_workforce_count = int(update.message.text)
+            workforce_id = context.user_data['workforce_id_to_refactor']
+
+            # Получаем данные о текущей записи
+            response = requests.get(f'{DJANGO_API_URL}frontworkforces/{workforce_id}/')
+            if response.status_code == 200:
+                workforce_data = response.json()
+
+                # Обновляем данные в базе данных
+                workforce_data['workforce_count'] = new_workforce_count
+                update_response = requests.patch(f'{DJANGO_API_URL}frontworkforces/{workforce_id}/',
+                                                 json=workforce_data)
+
+                print(update_response.json())
+                if update_response.status_code == 200:
+                    await update.message.reply_text('Численность успешно обновлена.')
+
+                    # Получение данных для вызова send_main_menu
+                    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat.id}/').json()
+                    full_name = user_data.get('full_name', 'Пользователь')
+                    organization_id = user_data.get('organization_id', None)
+                    await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+
+                    # Отправка данных в Google Sheets
+                    await update_workforce_in_google_sheets(
+                        workforce_data['id'],
+                        workforce_data['object_id'],
+                        workforce_data['block_section_id'],
+                        workforce_data['floor'],
+                        workforce_data['work_type_id'],
+                        workforce_data['organization_id'],
+                        new_workforce_count
+                    )
+
+                else:
+                    await update.message.reply_text('Ошибка при обновлении численности в базе данных.')
+            else:
+                await update.message.reply_text('Ошибка при получении данных численности.')
+        except ValueError:
+            await update.message.reply_text('Пожалуйста, введите корректное число.')
+
+        context.user_data['expecting_new_workforce_count'] = False
+
     else:
         await handle_message(update, context)
 
+
+
+async def view_today_workforce(query: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{query.message.chat.id}/').json()
+    user_object_id = user_data.get('object_id')
+    today = datetime.now().date()
+
+    response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
+    if response.status_code == 200:
+        workforces = response.json()
+        today_workforces = [wf for wf in workforces if parser.parse(wf['date']).date() == today and wf['object_id'] == user_object_id]
+        if today_workforces:
+            message = "Численность за сегодня:\n"
+            for wf in today_workforces:
+                block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
+                work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
+                organization_name = requests.get(f'{DJANGO_API_URL}organizations/{wf["organization_id"]}/').json()['organization']
+                message += (
+                    f"Секция: {block_section_name}\n"
+                    f"Этаж: {wf['floor']}\n"
+                    f"Вид работ: {work_type_name}\n"
+                    f"Организация: {organization_name}\n"
+                    f"Численность: {wf['workforce_count']}\n\n"
+                )
+            await query.message.reply_text(message)
+        else:
+            await query.message.reply_text("Сегодня численность не передавалась.")
+    else:
+        await query.message.reply_text('Ошибка при получении данных. Попробуйте снова.')
+
+    full_name = user_data.get('full_name', 'Пользователь')
+    organization_id = user_data.get('organization_id', None)
+    await send_main_menu(query.message.chat.id, context, full_name, organization_id)
+
+
+async def view_specific_day_workforce(query: Update, context: ContextTypes.DEFAULT_TYPE, day: int, month: int) -> None:
+    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{query.message.chat.id}/').json()
+    user_object_id = user_data.get('object_id')
+    year = datetime.now().year
+    specific_date = datetime(year, month, day).date()
+
+    response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
+    if response.status_code == 200:
+        workforces = response.json()
+        specific_day_workforces = [wf for wf in workforces if parser.parse(wf['date']).date() == specific_date and wf['object_id'] == user_object_id]
+        if specific_day_workforces:
+            message = f"Численность за {specific_date.strftime('%d.%m.%Y')}:\n"
+            for wf in specific_day_workforces:
+                block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
+                work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
+                organization_name = requests.get(f'{DJANGO_API_URL}organizations/{wf["organization_id"]}/').json()['organization']
+                message += (
+                    f"Секция: {block_section_name}\n"
+                    f"Этаж: {wf['floor']}\n"
+                    f"Вид работ: {work_type_name}\n"
+                    f"Организация: {organization_name}\n"
+                    f"Численность: {wf['workforce_count']}\n\n"
+
+                )
+            await query.message.reply_text(message)
+        else:
+            await query.message.reply_text(f"Численность за {specific_date.strftime('%d.%m.%Y')} не передавалась.")
+    else:
+        await query.message.reply_text('Ошибка при получении данных. Попробуйте снова.')
+
+    full_name = user_data.get('full_name', 'Пользователь')
+    organization_id = user_data.get('organization_id', None)
+    await send_main_menu(query.message.chat.id, context, full_name, organization_id)
+
+
+async def handle_delete_workforce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        workforce_id = context.user_data['workforce_id_to_delete']
+
+        # Удаляем данные из базы данных
+        delete_response = requests.delete(f'{DJANGO_API_URL}frontworkforces/{workforce_id}/')
+        if delete_response.status_code == 200:
+            await update.message.reply_text('Запись успешно удалена.')
+
+            # Отправка данных в Google Sheets
+            await delete_workforce_in_google_sheets(workforce_id)
+        else:
+            await update.message.reply_text('Ошибка при удалении записи из базы данных.')
+    except Exception as e:
+        await update.message.reply_text(f'Ошибка: {str(e)}')
+
+async def delete_workforce_in_google_sheets(workforce_id):
+    async with aiohttp.ClientSession() as session:
+        data = {
+            "action": "delete_workforce",
+            "H": workforce_id,  # Используется для поиска записи в Google Sheets
+        }
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -2408,9 +2625,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()  # Удаление предыдущего сообщения
         await handle_transfer_confirmation(query, context, confirmed=False)
 
+    elif data == 'front_menu':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("\U0001F91D Передать фронт", callback_data='transfer')],
+            [InlineKeyboardButton("\U0001F9F1 Принять фронт", callback_data='accept_fronts')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие для фронта:', reply_markup=reply_markup)
+
+    elif data == 'workforce_menu':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("\U0001F477 Передать численность", callback_data='workforce_transfer')],
+            [InlineKeyboardButton("\U0000270F Редактировать численность", callback_data='workforce_refactor')],
+            [InlineKeyboardButton("\U0000274C Удалить запись", callback_data='workforce_delete')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие для численности:', reply_markup=reply_markup)
 
     elif data == 'transfer':
-
+        await query.message.delete()
         # Удаление сообщения с основным меню
         if 'main_menu_message_id' in context.user_data:
             try:
@@ -2453,6 +2690,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 keyboard = [
                     [InlineKeyboardButton(obj['name'], callback_data=f'obj_{obj["id"]}')] for obj in filtered_objects
                 ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
                 context.user_data['stage'] = 'choose_object'
@@ -2584,9 +2822,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                     if filtered_objects:
                         keyboard = [
-                            [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in
-                            filtered_objects
+                            [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in filtered_objects
                         ]
+                        keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
                         context.user_data['stage'] = 'issue_choose_object'
@@ -2874,12 +3112,303 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif data == 'workforce_transfer':
         await handle_transfer_workforce(query, context)
 
-    elif data.startswith('workforce_'):
-        front_id = int(data.split('_')[1])
-        context.user_data['workforce_front_id'] = front_id
+
+
+    elif data.startswith('workforce_obj_'):
         await query.message.delete()
+        object_id = int(data.split('_')[2])
+        context.user_data['workforce_object_id'] = object_id
+        common_work_types_ids = await get_common_work_types(object_id, context.user_data['organization_id'])
+        if common_work_types_ids:
+            ids_query = "&".join([f"ids={id}" for id in common_work_types_ids])
+            response = requests.get(f'{DJANGO_API_URL}worktypes/?{ids_query}')
+            if response.status_code == 200:
+                work_types = response.json()
+                keyboard = [
+                    [InlineKeyboardButton(work['name'], callback_data=f'workforce_work_{work["id"]}')] for work in
+                    work_types
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Ошибка при получении списка видов работ. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Нет доступных видов работ для выбранного объекта и организации.')
+
+
+    elif data.startswith('workforce_block_'):
+        await query.message.delete()
+        block_section_id = int(data.split('_')[2])
+        context.user_data['workforce_block_section_id'] = block_section_id
+        response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
+        if response.status_code == 200:
+            block_section = response.json()
+            number_of_floors = block_section['number_of_floors']
+            keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'workforce_floor_{i}')] for i in
+                        range(-2, number_of_floors + 1)]
+            keyboard.append([InlineKeyboardButton('Кровля', callback_data='workforce_floor_roof')])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
+
+        else:
+            await query.message.reply_text('Ошибка при получении информации о блоке или секции. Попробуйте снова.')
+
+    elif data.startswith('workforce_floor_'):
+        await query.message.delete()
+        floor = data.split('_')[2]
+        context.user_data['workforce_floor'] = floor
         await query.message.reply_text('Введите численность:')
         context.user_data['expecting_workforce_count'] = True
+
+
+    elif data.startswith('workforce_work_'):
+        await query.message.delete()
+        work_type_id = int(data.split('_')[2])
+        context.user_data['workforce_work_type_id'] = work_type_id
+        work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{work_type_id}/')
+        if work_type_response.status_code == 200:
+            work_type_name = work_type_response.json()['name']
+            context.user_data['workforce_work_type_name'] = work_type_name
+            response = requests.get(
+                f'{DJANGO_API_URL}objects/{context.user_data["workforce_object_id"]}/blocksections/')
+
+            if response.status_code == 200:
+                block_sections = response.json()
+                keyboard = [
+                    [InlineKeyboardButton(block['name'], callback_data=f'workforce_block_{block["id"]}')] for block in
+                    block_sections
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Ошибка при получении списка блоков или секций. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных вида работ. Попробуйте снова.')
+
+
+    elif data.startswith('delete_workforce_'):
+        await query.message.delete()
+        workforce_id = int(data.split('_')[2])
+        context.user_data['workforce_id_to_delete'] = workforce_id
+        await query.message.reply_text('Вы действительно хотите удалить эту запись?',
+                                       reply_markup=InlineKeyboardMarkup([
+                                           [InlineKeyboardButton("\U00002705 Да", callback_data='confirm_delete_workforce')],
+                                           [InlineKeyboardButton("\U0000274C Нет", callback_data='workforce_menu')]
+                                       ]))
+
+
+    elif data == 'confirm_delete_workforce':
+        await query.message.delete()
+        await handle_delete_workforce(query, context)
+
+    elif data == 'repeat_workforce':
+        await query.edit_message_reply_markup(reply_markup=None)
+        response = requests.get(f'{DJANGO_API_URL}objects/{context.user_data["workforce_object_id"]}/blocksections/')
+        if response.status_code == 200:
+            block_sections = response.json()
+            keyboard = [
+                [InlineKeyboardButton(block['name'], callback_data=f'workforce_block_{block["id"]}')] for block in
+                block_sections
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
+        else:
+            await query.message.reply_text('Ошибка при получении списка блоков или секций. Попробуйте снова.')
+
+    elif data == 'workforce_refactor':
+        await query.message.delete()
+        today = datetime.now().date().isoformat()
+        response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
+
+        if response.status_code == 200:
+            workforces = response.json()
+            user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/').json()
+            user_id = user_data.get('id')
+
+            # Фильтруем записи только за сегодняшний день и для текущего объекта
+            today_workforces = [
+                wf for wf in workforces
+                if parser.parse(wf['date']).date().isoformat() == today and wf['user_id'] == user_id
+            ]
+
+            if today_workforces:
+                buttons = []
+                for wf in today_workforces:
+                    work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
+                    block_section_name = \
+                    requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
+                    button_text = f"{wf['workforce_count']} - {work_type_name} - {block_section_name} - Этаж {wf['floor']}"
+                    buttons.append([InlineKeyboardButton(button_text, callback_data=f'refactor_{wf["id"]}')])
+
+                reply_markup = InlineKeyboardMarkup(buttons)
+                await query.message.reply_text('Выберите численность для редактирования:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Сегодня нет численностей для редактирования.')
+        else:
+            await query.message.reply_text('Ошибка при получении списка численностей. Попробуйте снова.')
+
+    elif data == 'workforce_delete':
+        await query.message.delete()
+        today = datetime.now().date().isoformat()
+        response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
+
+        if response.status_code == 200:
+            workforces = response.json()
+            user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/').json()
+            user_id = user_data.get('id')
+
+            # Фильтруем записи только за сегодняшний день и для текущего объекта
+            today_workforces = [
+                wf for wf in workforces
+                if parser.parse(wf['date']).date().isoformat() == today and wf['user_id'] == user_id
+            ]
+            if today_workforces:
+                buttons = []
+                for wf in today_workforces:
+                    work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
+                    block_section_name = \
+                        requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
+                    button_text = f"{wf['workforce_count']} - {work_type_name} - {block_section_name} - Этаж {wf['floor']}"
+                    buttons.append([InlineKeyboardButton(button_text, callback_data=f'delete_workforce_{wf["id"]}')])
+
+                reply_markup = InlineKeyboardMarkup(buttons)
+                await query.message.reply_text('Выберите запись численности для удаления:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Сегодня не было передано численностей.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных о численности.')
+
+
+    elif data.startswith('refactor_'):
+        await query.message.delete()
+        workforce_id = int(data.split('_')[1])
+        context.user_data['workforce_id_to_refactor'] = workforce_id
+        await query.message.reply_text('Введите новую численность:')
+        context.user_data['expecting_new_workforce_count'] = True
+
+
+    elif data == 'view_workforce':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("\U0001F4E2 Оповестить", callback_data='notify_organizations')],
+            [InlineKeyboardButton("\U0001F4C6 Сегодня", callback_data='view_today_workforce')],
+            [InlineKeyboardButton("\U0001F50D Определенный день", callback_data='choose_month')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие:', reply_markup=reply_markup)
+
+    elif data == 'notify_organizations':
+        await query.message.delete()
+        # Получаем данные пользователя
+        response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+        if response.status_code == 200:
+            user_data = response.json()
+            user_object_id = user_data.get('object_id')
+
+            if user_object_id is None:
+                await query.message.reply_text("У вас нет назначенного объекта.")
+                return
+
+            # Получаем список организаций, у которых в object_ids есть наш object_id
+            response = requests.get(f'{DJANGO_API_URL}organizations/')
+            if response.status_code == 200:
+                organizations = response.json()
+                relevant_organizations = [
+                    org for org in organizations if org.get('object_ids') and user_object_id in org['object_ids']
+                ]
+
+                if not relevant_organizations:
+                    await query.message.reply_text("Нет организаций для уведомления.")
+                    return
+
+                organization_ids = [org['id'] for org in relevant_organizations]
+
+                # Получаем список пользователей, у которых organization_id есть в списке relevant_organizations
+                response = requests.get(f'{DJANGO_API_URL}users/')
+                if response.status_code == 200:
+                    users = response.json()
+                    relevant_users = [
+                        user for user in users if user['organization_id'] in organization_ids
+                    ]
+
+                    if not relevant_users:
+                        await query.message.reply_text("Нет пользователей для уведомления.")
+                        return
+
+                    chat_ids = [user['chat_id'] for user in relevant_users]
+
+                    # Отправка уведомления
+                    notification_text = "\U00002757 **Генеральный подрядчик напоминает вам внести численность для текущего фронта работ.**"
+                    for chat_id in chat_ids:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=notification_text,
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                        except Exception as e:
+                            logger.error(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+
+                    await query.message.reply_text("Уведомления успешно отправлены.")
+
+                    # Возвращение в главное меню
+                    full_name = user_data.get('full_name', 'Пользователь')
+                    organization_id = user_data.get('organization_id', None)
+                    await send_main_menu(user_id, context, full_name, organization_id)
+
+                else:
+                    await query.message.reply_text("Ошибка при получении списка пользователей.")
+            else:
+                await query.message.reply_text("Ошибка при получении списка организаций.")
+        else:
+            await query.message.reply_text("Ошибка при получении данных пользователя.")
+
+
+    elif data == 'view_today_workforce':
+        await query.message.delete()
+        await view_today_workforce(query, context)
+
+
+    elif data == 'choose_month':
+        await query.message.delete()
+
+        # Разбиваем месяцы на три строки по четыре месяца в строке
+        months = [
+            ["Январь", "Февраль", "Март", "Апрель"],
+            ["Май", "Июнь", "Июль", "Август"],
+            ["Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+        ]
+
+        keyboard = [
+            [InlineKeyboardButton(month, callback_data=f'month_{i * 4 + j + 1}') for j, month in enumerate(row)]
+            for i, row in enumerate(months)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите месяц:', reply_markup=reply_markup)
+
+
+    elif data.startswith('month_'):
+        await query.message.delete()
+        month = int(data.split('_')[1])
+        context.user_data['selected_month'] = month
+        days_in_month = (datetime(2024, month % 12 + 1, 1) - timedelta(days=1)).day
+
+        # Разбиваем дни на строки по 7 дней в каждой строке
+        keyboard = [
+            [InlineKeyboardButton(str(day), callback_data=f'day_{day}') for day in
+             range(i, min(i + 7, days_in_month + 1))]
+            for i in range(1, days_in_month + 1, 7)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.reply_text('Выберите день:', reply_markup=reply_markup)
+
+    elif data.startswith('day_'):
+        await query.message.delete()
+        day = int(data.split('_')[1])
+        month = context.user_data['selected_month']
+        await view_specific_day_workforce(query, context, day, month)
 
 def main() -> None:
     # Вставьте свой токен

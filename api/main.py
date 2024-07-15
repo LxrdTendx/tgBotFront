@@ -108,14 +108,24 @@ class FrontWorkforce(Base):
     __tablename__ = "frontworkforces"
 
     id = Column(Integer, primary_key=True, index=True)
-    front_transfer_id = Column(Integer, ForeignKey("fronttransfers.id"))
-    date = Column(DateTime, default=datetime.utcnow)
+    object_id = Column(Integer, ForeignKey("objects.id"))
+    block_section_id = Column(Integer, ForeignKey("blocksections.id"))
+    floor = Column(String)
+    work_type_id = Column(Integer, ForeignKey("worktypes.id"))
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
     workforce_count = Column(Integer)
+    date = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    front_transfer = relationship("FrontTransfer", back_populates="workforces")
+    object = relationship("Object")
+    block_section = relationship("BlockSection")
+    work_type = relationship("WorkType")
+    organization = relationship("Organization")
+    user = relationship("User")
 
 
-FrontTransfer.workforces = relationship("FrontWorkforce", order_by=FrontWorkforce.id, back_populates="front_transfer")
+
+
 
 # Pydantic models
 class OrganizationBase(BaseModel):
@@ -262,9 +272,17 @@ class FrontTransferResponse(FrontTransferBase):
 
 
 class FrontWorkforceBase(BaseModel):
-    front_transfer_id: int
+    object_id: int
+    block_section_id: int
+    floor: str
+    work_type_id: int
+    organization_id: int
+    workforce_count: Optional[int] = None
     date: datetime
-    workforce_count: int
+    user_id: Optional[int] = None
+
+    class Config:
+        orm_mode = True
 
 
 class FrontWorkforceCreate(FrontWorkforceBase):
@@ -280,6 +298,7 @@ class FrontWorkforceResponse(FrontWorkforceBase):
 
     class Config:
         orm_mode = True
+
 
 # FastAPI setup
 app = FastAPI()
@@ -577,7 +596,7 @@ def create_front_workforce(front_workforce: FrontWorkforceCreate, db: Session = 
 
 
 @app.get("/frontworkforces/", response_model=List[FrontWorkforceResponse])
-def read_front_workforces(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_front_workforces(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     front_workforces = db.query(FrontWorkforce).offset(skip).limit(limit).all()
     return front_workforces
 
@@ -587,6 +606,30 @@ def read_front_workforce(front_workforce_id: int, db: Session = Depends(get_db))
     front_workforce = db.query(FrontWorkforce).filter(FrontWorkforce.id == front_workforce_id).first()
     if front_workforce is None:
         raise HTTPException(status_code=404, detail="FrontWorkforce not found")
+    return front_workforce
+
+
+@app.patch("/frontworkforces/{front_workforce_id}", response_model=FrontWorkforceResponse)
+def update_front_workforce(front_workforce_id: int, front_workforce: FrontWorkforceUpdate,
+                           db: Session = Depends(get_db)):
+    db_front_workforce = db.query(FrontWorkforce).filter(FrontWorkforce.id == front_workforce_id).first()
+    if db_front_workforce is None:
+        raise HTTPException(status_code=404, detail="FrontWorkforce not found")
+
+    for key, value in front_workforce.dict(exclude_unset=True).items():
+        setattr(db_front_workforce, key, value)
+
+    db.commit()
+    db.refresh(db_front_workforce)
+    return db_front_workforce
+
+@app.delete("/frontworkforces/{front_workforce_id}", response_model=FrontWorkforceResponse)
+def delete_front_workforce(front_workforce_id: int, db: Session = Depends(get_db)):
+    front_workforce = db.query(FrontWorkforce).filter(FrontWorkforce.id == front_workforce_id).first()
+    if front_workforce is None:
+        raise HTTPException(status_code=404, detail="FrontWorkforce not found")
+    db.delete(front_workforce)
+    db.commit()
     return front_workforce
 
 
