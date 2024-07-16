@@ -2275,16 +2275,24 @@ async def handle_transfer_workforce(query: Update, context: ContextTypes.DEFAULT
         user_data = user_response.json()
         organization_id = user_data['organization_id']
         context.user_data['organization_id'] = organization_id
+
+        # Получаем данные организации, чтобы узнать object_ids
+        organization_response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+        if organization_response.status_code == 200:
+            organization_data = organization_response.json()
+            organization_object_ids = organization_data.get('object_ids', [])
+        else:
+            await query.message.reply_text('Ошибка при получении данных организации. Попробуйте снова.')
+            return
     else:
         await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
         return
 
-    # Получаем объекты организации
+    # Получаем объекты
     response = requests.get(f'{DJANGO_API_URL}objects/')
     if response.status_code == 200:
         objects = response.json()
-        filtered_objects = [obj for obj in objects if organization_id in obj['work_types_ids']]
-
+        filtered_objects = [obj for obj in objects if obj['id'] in organization_object_ids]
         if filtered_objects:
             keyboard = [
                 [InlineKeyboardButton(obj['name'], callback_data=f'workforce_obj_{obj["id"]}')] for obj in filtered_objects
@@ -2296,6 +2304,7 @@ async def handle_transfer_workforce(query: Update, context: ContextTypes.DEFAULT
             await query.message.reply_text('Нет доступных объектов для данной организации.')
     else:
         await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
 
 
 async def update_workforce_in_google_sheets(workforce_id, object_id, block_section_id, floor, work_type_id, organization_id, new_workforce_count):
@@ -2481,19 +2490,18 @@ async def view_today_workforce(query: Update, context: ContextTypes.DEFAULT_TYPE
         workforces = response.json()
         today_workforces = [wf for wf in workforces if parser.parse(wf['date']).date() == today and wf['object_id'] == user_object_id]
         if today_workforces:
-            message = "Численность за сегодня:\n"
+            message = "\U0001F477 *Численность за сегодня:*\n"
             for wf in today_workforces:
                 block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
                 work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
                 organization_name = requests.get(f'{DJANGO_API_URL}organizations/{wf["organization_id"]}/').json()['organization']
                 message += (
-                    f"Секция: {block_section_name}\n"
-                    f"Этаж: {wf['floor']}\n"
-                    f"Вид работ: {work_type_name}\n"
-                    f"Организация: {organization_name}\n"
-                    f"Численность: {wf['workforce_count']}\n\n"
+                    f"{wf['workforce_count']} чел. — {work_type_name} — {block_section_name} — Этаж {wf['floor']} — {organization_name}\n\n"
                 )
-            await query.message.reply_text(message)
+            await query.message.reply_text(
+                text=message,
+                parse_mode=ParseMode.MARKDOWN
+            )
         else:
             await query.message.reply_text("Сегодня численность не передавалась.")
     else:
@@ -2515,20 +2523,15 @@ async def view_specific_day_workforce(query: Update, context: ContextTypes.DEFAU
         workforces = response.json()
         specific_day_workforces = [wf for wf in workforces if parser.parse(wf['date']).date() == specific_date and wf['object_id'] == user_object_id]
         if specific_day_workforces:
-            message = f"Численность за {specific_date.strftime('%d.%m.%Y')}:\n"
+            message = f"\U0001F477 *Численность за {specific_date.strftime('%d.%m.%Y')}:*\n"
             for wf in specific_day_workforces:
                 block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
                 work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{wf["work_type_id"]}/').json()['name']
                 organization_name = requests.get(f'{DJANGO_API_URL}organizations/{wf["organization_id"]}/').json()['organization']
                 message += (
-                    f"Секция: {block_section_name}\n"
-                    f"Этаж: {wf['floor']}\n"
-                    f"Вид работ: {work_type_name}\n"
-                    f"Организация: {organization_name}\n"
-                    f"Численность: {wf['workforce_count']}\n\n"
-
+                    f"{wf['workforce_count']} чел. — {work_type_name} — {block_section_name} — Этаж {wf['floor']} — {organization_name}\n\n"
                 )
-            await query.message.reply_text(message)
+            await query.message.reply_text(text=message, parse_mode=ParseMode.MARKDOWN)
         else:
             await query.message.reply_text(f"Численность за {specific_date.strftime('%d.%m.%Y')} не передавалась.")
     else:
