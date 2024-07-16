@@ -8,13 +8,17 @@ import json
 import requests
 from openpyxl import load_workbook
 from openpyxl.styles import Font
-import win32com.client as win32
 import os
 from datetime import datetime, timedelta
 import aiohttp
 from typing import List
 from dateutil import parser
-import asyncio
+import requests
+from docx import Document
+from docx.shared import Pt
+import os
+from datetime import datetime
+from docx2pdf import convert
 
 # Включаем логирование
 logging.basicConfig(
@@ -743,7 +747,7 @@ async def handle_transfer_confirmation(query: Update, context: ContextTypes.DEFA
             context.user_data.pop('last_photo_message_id', None)  # Сброс идентификатора последнего сообщения
 
             # Удаляем только кнопки
-            await query.edit_message_reply_markup(reply_markup=None)
+
             await query.message.reply_text(
                 'Этаж успешно выбран! Пожалуйста, прикрепите фотографии (до 10 штук) или нажмите /done:')
             context.user_data['stage'] = 'attach_photos'
@@ -1201,49 +1205,46 @@ async def generate_pdf(front_id: int) -> str:
                   "июля", "августа", "сентября", "октября", "ноября", "декабря"]
         month = months[approval_at.month - 1]
 
-        # Открытие Excel-файла
-        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний.xlsx')
-        workbook = load_workbook(excel_path)
-        worksheet = workbook.active
-
-        # Установка фиксированной ширины для первых трех колонок
-        worksheet.column_dimensions['A'].width = 25
-        worksheet.column_dimensions['B'].width = 25
-        worksheet.column_dimensions['C'].width = 28
+        # Открытие DOCX-файла
+        doc_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний.docx')
+        doc = Document(doc_path)
 
         # Замена плейсхолдеров в документе и установка размера шрифта
-        def replace_placeholder(ws, placeholder, replacement):
-            font = Font(size=10)
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
-                        cell.value = cell.value.replace(placeholder, replacement)
-                        cell.font = font
+        def replace_placeholder(doc, placeholder, replacement):
+            for paragraph in doc.paragraphs:
+                if placeholder in paragraph.text:
+                    for run in paragraph.runs:
+                        if placeholder in run.text:
+                            run.text = run.text.replace(placeholder, replacement)
+                            run.font.size = Pt(10)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if placeholder in paragraph.text:
+                                for run in paragraph.runs:
+                                    if placeholder in run.text:
+                                        run.text = run.text.replace(placeholder, replacement)
+                                        run.font.size = Pt(10)
 
-        replace_placeholder(worksheet, 'objectname', object_name)
-        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
-        replace_placeholder(worksheet, 'bossname', boss_name)
-        replace_placeholder(worksheet, 'sendername', receiver_name)
-        replace_placeholder(worksheet, 'floor', front['floor'])
-
-        replace_placeholder(worksheet, 'orgname', organization_name)
-        replace_placeholder(worksheet, 'day', str(day))
-        replace_placeholder(worksheet, 'month', month)
-        replace_placeholder(worksheet, 'worktype', work_type)
+        replace_placeholder(doc, 'objectname', object_name)
+        replace_placeholder(doc, 'blocksectionid', block_section_name)
+        replace_placeholder(doc, 'bossname', boss_name)
+        replace_placeholder(doc, 'sendername', receiver_name)
+        replace_placeholder(doc, 'floor', str(front['floor']))
+        replace_placeholder(doc, 'orgname', organization_name)
+        replace_placeholder(doc, 'day', str(day))
+        replace_placeholder(doc, 'month', month)
+        replace_placeholder(doc, 'worktype', work_type)
 
         # Сохранение обновленного документа в буфер
-        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
-        workbook.save(temp_excel_path)
-        # print("Документ сохранен: ", temp_excel_path)
+        temp_docx_path = os.path.abspath('PDF_акты/temp_updated_document.docx')
+        doc.save(temp_docx_path)
+        # print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация Excel в PDF
-        excel_app = win32.Dispatch('Excel.Application')
-        workbook = excel_app.Workbooks.Open(temp_excel_path)
-        pdf_output_path = os.path.abspath(
-            f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
-        workbook.ExportAsFixedFormat(0, pdf_output_path)
-        workbook.Close(False)
-        excel_app.Quit()
+        # Конвертация DOCX в PDF с использованием docx2pdf
+        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
+        convert(temp_docx_path, pdf_output_path)
 
         # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
@@ -1272,49 +1273,46 @@ async def generate_pdf_reverse(front_id: int) -> str:
                   "июля", "августа", "сентября", "октября", "ноября", "декабря"]
         month = months[approval_at.month - 1]
 
-        # Открытие Excel-файла
-        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний_reverse.xlsx')
-        workbook = load_workbook(excel_path)
-        worksheet = workbook.active
-
-        # Установка фиксированной ширины для первых трех колонок
-        worksheet.column_dimensions['A'].width = 25
-        worksheet.column_dimensions['B'].width = 25
-        worksheet.column_dimensions['C'].width = 28
+        # Открытие DOCX-файла
+        doc_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_двухсторонний_reverse.docx')
+        doc = Document(doc_path)
 
         # Замена плейсхолдеров в документе и установка размера шрифта
-        def replace_placeholder(ws, placeholder, replacement):
-            font = Font(size=10)
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
-                        cell.value = cell.value.replace(placeholder, replacement)
-                        cell.font = font
+        def replace_placeholder(doc, placeholder, replacement):
+            for paragraph in doc.paragraphs:
+                if placeholder in paragraph.text:
+                    for run in paragraph.runs:
+                        if placeholder in run.text:
+                            run.text = run.text.replace(placeholder, replacement)
+                            run.font.size = Pt(10)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if placeholder in paragraph.text:
+                                for run in paragraph.runs:
+                                    if placeholder in run.text:
+                                        run.text = run.text.replace(placeholder, replacement)
+                                        run.font.size = Pt(10)
 
-        replace_placeholder(worksheet, 'objectname', object_name)
-        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
-        replace_placeholder(worksheet, 'bossname', boss_name)
-        replace_placeholder(worksheet, 'sendername', receiver_name)
-        replace_placeholder(worksheet, 'floor', front['floor'])
-
-        replace_placeholder(worksheet, 'orgname', organization_name)
-        replace_placeholder(worksheet, 'day', str(day))
-        replace_placeholder(worksheet, 'month', month)
-        replace_placeholder(worksheet, 'worktype', work_type)
+        replace_placeholder(doc, 'objectname', object_name)
+        replace_placeholder(doc, 'blocksectionid', block_section_name)
+        replace_placeholder(doc, 'bossname', boss_name)
+        replace_placeholder(doc, 'sendername', receiver_name)
+        replace_placeholder(doc, 'floor', str(front['floor']))
+        replace_placeholder(doc, 'orgname', organization_name)
+        replace_placeholder(doc, 'day', str(day))
+        replace_placeholder(doc, 'month', month)
+        replace_placeholder(doc, 'worktype', work_type)
 
         # Сохранение обновленного документа в буфер
-        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
-        workbook.save(temp_excel_path)
-        # print("Документ сохранен: ", temp_excel_path)
+        temp_docx_path = os.path.abspath('PDF_акты/temp_updated_document_reverse.docx')
+        doc.save(temp_docx_path)
+        # print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация Excel в PDF
-        excel_app = win32.Dispatch('Excel.Application')
-        workbook = excel_app.Workbooks.Open(temp_excel_path)
-        pdf_output_path = os.path.abspath(
-            f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
-        workbook.ExportAsFixedFormat(0, pdf_output_path)
-        workbook.Close(False)
-        excel_app.Quit()
+        # Конвертация DOCX в PDF с использованием docx2pdf
+        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний_reverse.pdf')
+        convert(temp_docx_path, pdf_output_path)
 
         # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
@@ -1439,8 +1437,7 @@ async def handle_transfer(query: Update, context: ContextTypes.DEFAULT_TYPE, fro
     if response.status_code == 200:
         organizations = response.json()
         keyboard = [
-            [InlineKeyboardButton(org['organization'], callback_data=f'transfer_org_{org["id"]}')] for org in
-            organizations
+            [InlineKeyboardButton(org['organization'], callback_data=f'transfer_org_{org["id"]}')] for org in organizations if org['organization'] != "БОС"
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите организацию:', reply_markup=reply_markup)
@@ -1693,7 +1690,7 @@ async def generate_pdf_triple(front_id: int) -> str:
     async with aiohttp.ClientSession() as session:
         # Получение данных фронта
         front = await fetch_data(session, f'{DJANGO_API_URL}fronttransfers/{front_id}/')
-
+        print(front)
         # Получение необходимых данных для замены
         object_name = (await fetch_data(session, f'{DJANGO_API_URL}objects/{front["object_id"]}/'))['name']
         block_section_name = (await fetch_data(session, f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/'))['name']
@@ -1709,8 +1706,7 @@ async def generate_pdf_triple(front_id: int) -> str:
 
         organization_name1 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_sender}/'))['organization']
         organization_name2 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_receiver}/'))['organization']
-        work_type = (await fetch(session, f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
-
+        work_type = (await fetch_data(session, f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
 
         # Извлечение дня и месяца из поля approval_at
         approval_at = datetime.fromisoformat(front['approval_at'])
@@ -1721,49 +1717,48 @@ async def generate_pdf_triple(front_id: int) -> str:
                   "июля", "августа", "сентября", "октября", "ноября", "декабря"]
         month = months[approval_at.month - 1]
 
-        # Открытие Excel-файла
-        excel_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_трехсторонний.xlsx')
-        workbook = load_workbook(excel_path)
-        worksheet = workbook.active
-
-        # Установка фиксированной ширины для первых трех колонок
-        worksheet.column_dimensions['A'].width = 25
-        worksheet.column_dimensions['B'].width = 25
-        worksheet.column_dimensions['C'].width = 28
+        # Открытие DOCX-файла
+        doc_path = os.path.abspath('PDF_акты/Акт_приема_передачи_фронта_работ_трехсторонний.docx')
+        doc = Document(doc_path)
 
         # Замена плейсхолдеров в документе и установка размера шрифта
-        def replace_placeholder(ws, placeholder, replacement):
-            font = Font(size=10)  # Создаем шрифт с размером 10
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value and isinstance(cell.value, str) and placeholder in cell.value:
-                        cell.value = cell.value.replace(placeholder, replacement)
-                        cell.font = font
+        def replace_placeholder(doc, placeholder, replacement):
+            for paragraph in doc.paragraphs:
+                if placeholder in paragraph.text:
+                    for run in paragraph.runs:
+                        if placeholder in run.text:
+                            run.text = run.text.replace(placeholder, replacement)
+                            run.font.size = Pt(10)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if placeholder in paragraph.text:
+                                for run in paragraph.runs:
+                                    if placeholder in run.text:
+                                        run.text = run.text.replace(placeholder, replacement)
+                                        run.font.size = Pt(10)
 
-        replace_placeholder(worksheet, 'objectname', object_name)
-        replace_placeholder(worksheet, 'blocksectionid', block_section_name)
-        replace_placeholder(worksheet, 'bossname', boss_name)
-        replace_placeholder(worksheet, 'sendername', sender_name)
-        replace_placeholder(worksheet, 'receivername', receiver_name)
-        replace_placeholder(worksheet, 'floor', front['floor'])
-        replace_placeholder(worksheet, 'orgname1', organization_name1)
-        replace_placeholder(worksheet, 'orgname2', organization_name2)
-        replace_placeholder(worksheet, 'day', str(day))
-        replace_placeholder(worksheet, 'month', month)
-        replace_placeholder(worksheet, 'worktype', work_type)
+        replace_placeholder(doc, 'objectname', object_name)
+        replace_placeholder(doc, 'blocksectionid', block_section_name)
+        replace_placeholder(doc, 'bossname', boss_name)
+        replace_placeholder(doc, 'sendername', sender_name)
+        replace_placeholder(doc, 'receivername', receiver_name)
+        replace_placeholder(doc, 'floor', str(front['floor']))
+        replace_placeholder(doc, 'orgname1', organization_name1)
+        replace_placeholder(doc, 'orgname2', organization_name2)
+        replace_placeholder(doc, 'day', str(day))
+        replace_placeholder(doc, 'month', month)
+        replace_placeholder(doc, 'worktype', work_type)
 
         # Сохранение обновленного документа в буфер
-        temp_excel_path = os.path.abspath('PDF_акты/temp_updated_document.xlsx')
-        workbook.save(temp_excel_path)
-        # print("Документ сохранен: ", temp_excel_path)
+        temp_docx_path = os.path.abspath('PDF_акты/temp_updated_document_triple.docx')
+        doc.save(temp_docx_path)
+        # print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация Excel в PDF
-        excel_app = win32.Dispatch('Excel.Application')
-        workbook = excel_app.Workbooks.Open(temp_excel_path)
+        # Конвертация DOCX в PDF с использованием docx2pdf
         pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_трехсторонний.pdf')
-        workbook.ExportAsFixedFormat(0, pdf_output_path)
-        workbook.Close(False)
-        excel_app.Quit()
+        convert(temp_docx_path, pdf_output_path)
 
         # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
@@ -2849,8 +2844,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if response.status_code == 200:
             organizations = response.json()
             keyboard = [
-                [InlineKeyboardButton(org['organization'], callback_data=f'issue_org_{org["id"]}')] for org in
-                organizations
+                [InlineKeyboardButton(org['organization'], callback_data=f'issue_org_{org["id"]}')] for org in organizations if org['organization'] != "БОС"
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите организацию:', reply_markup=reply_markup)
