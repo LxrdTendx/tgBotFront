@@ -61,7 +61,7 @@ class BlockSection(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     object_id = Column(Integer, ForeignKey("objects.id"))
-    name = Column(String, unique=True, index=True)
+    name = Column(String, index=True)
     number_of_floors = Column(Integer)
 
     object = relationship("Object", back_populates="block_sections")
