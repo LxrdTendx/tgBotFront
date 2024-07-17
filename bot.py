@@ -14,11 +14,14 @@ import aiohttp
 from typing import List
 from dateutil import parser
 import requests
+from docx2pdf import convert
+import aiohttp
+import os
+import subprocess
+import platform
 from docx import Document
 from docx.shared import Pt
-import os
 from datetime import datetime
-from docx2pdf import convert
 
 # Включаем логирование
 logging.basicConfig(
@@ -1242,9 +1245,27 @@ async def generate_pdf(front_id: int) -> str:
         doc.save(temp_docx_path)
         # print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация DOCX в PDF с использованием docx2pdf
-        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний.pdf')
-        convert(temp_docx_path, pdf_output_path)
+        # Конвертация DOCX в PDF с использованием LibreOffice
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_двусторонний.pdf'
+        pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
+
+        # Определяем команду для конвертации в зависимости от операционной системы
+        if platform.system() == "Windows":
+            libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+        else:
+            libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
+
+        libreoffice_command = [
+            libreoffice_path, '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_output_path), temp_docx_path
+        ]
+
+        # Выполняем команду
+        subprocess.run(libreoffice_command, check=True)
+
+        # Переименовываем файл
+        temp_pdf_path = os.path.join(os.path.dirname(pdf_output_path), 'temp_updated_document.pdf')
+        if os.path.exists(temp_pdf_path):
+            os.rename(temp_pdf_path, pdf_output_path)
 
         # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
@@ -1310,9 +1331,27 @@ async def generate_pdf_reverse(front_id: int) -> str:
         doc.save(temp_docx_path)
         # print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация DOCX в PDF с использованием docx2pdf
-        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_двусторонний_reverse.pdf')
-        convert(temp_docx_path, pdf_output_path)
+        # Конвертация DOCX в PDF с использованием LibreOffice
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_двусторонний_reverse.pdf'
+        pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
+
+        # Определяем команду для конвертации в зависимости от операционной системы
+        if platform.system() == "Windows":
+            libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+        else:
+            libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
+
+        libreoffice_command = [
+            libreoffice_path, '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_output_path), temp_docx_path
+        ]
+
+        # Выполняем команду
+        subprocess.run(libreoffice_command, check=True)
+
+        # Переименовываем файл
+        temp_pdf_path = os.path.join(os.path.dirname(pdf_output_path), 'temp_updated_document_reverse.pdf')
+        if os.path.exists(temp_pdf_path):
+            os.rename(temp_pdf_path, pdf_output_path)
 
         # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
@@ -1687,26 +1726,29 @@ async def fetch_data(session, url):
         return await response.json()
 
 async def generate_pdf_triple(front_id: int) -> str:
+    API_URL = 'http://127.0.0.1:8000'
     async with aiohttp.ClientSession() as session:
         # Получение данных фронта
-        front = await fetch_data(session, f'{DJANGO_API_URL}fronttransfers/{front_id}/')
-        print(front)
-        # Получение необходимых данных для замены
-        object_name = (await fetch_data(session, f'{DJANGO_API_URL}objects/{front["object_id"]}/'))['name']
-        block_section_name = (await fetch_data(session, f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/'))['name']
-        boss_name = (await fetch_data(session, f'{DJANGO_API_URL}users/{front["boss_id"]}/'))['full_name']
+        front = await fetch_data(session, f'{API_URL}/fronttransfers/{front_id}')
+        if not front:
+            raise Exception(f'Ошибка при получении данных фронта: {front.status}')
 
-        sender = await fetch_data(session, f'{DJANGO_API_URL}users/{front["sender_id"]}/')
-        sender_name = sender['full_name']
+        # Получение необходимых данных для замены
+        object_name = (await fetch_data(session, f'{API_URL}/objects/{front["object_id"]}')).get('name', 'неизвестно')
+        block_section_name = (await fetch_data(session, f'{API_URL}/blocksections/{front["block_section_id"]}')).get('name', 'неизвестно')
+        boss_name = (await fetch_data(session, f'{API_URL}/users/{front["boss_id"]}')).get('full_name', 'неизвестно')
+
+        sender = await fetch_data(session, f'{API_URL}/users/{front["sender_id"]}')
+        sender_name = sender.get('full_name', 'неизвестно')
         organization_id_sender = sender['organization_id']
 
-        receiver = await fetch_data(session, f'{DJANGO_API_URL}users/{front["receiver_id"]}/')
-        receiver_name = receiver['full_name']
+        receiver = await fetch_data(session, f'{API_URL}/users/{front["receiver_id"]}')
+        receiver_name = receiver.get('full_name', 'неизвестно')
         organization_id_receiver = receiver['organization_id']
 
-        organization_name1 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_sender}/'))['organization']
-        organization_name2 = (await fetch_data(session, f'{DJANGO_API_URL}organizations/{organization_id_receiver}/'))['organization']
-        work_type = (await fetch_data(session, f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
+        organization_name1 = (await fetch_data(session, f'{API_URL}/organizations/{organization_id_sender}')).get('organization', 'неизвестно')
+        organization_name2 = (await fetch_data(session, f'{API_URL}/organizations/{organization_id_receiver}')).get('organization', 'неизвестно')
+        work_type = (await fetch_data(session, f'{API_URL}/worktypes/{front["work_type_id"]}')).get('name', 'неизвестно')
 
         # Извлечение дня и месяца из поля approval_at
         approval_at = datetime.fromisoformat(front['approval_at'])
@@ -1754,13 +1796,31 @@ async def generate_pdf_triple(front_id: int) -> str:
         # Сохранение обновленного документа в буфер
         temp_docx_path = os.path.abspath('PDF_акты/temp_updated_document_triple.docx')
         doc.save(temp_docx_path)
-        # print("Документ сохранен: ", temp_docx_path)
+        print("Документ сохранен: ", temp_docx_path)
 
-        # Конвертация DOCX в PDF с использованием docx2pdf
-        pdf_output_path = os.path.abspath(f'PDF_акты/{object_name}_{work_type}_{boss_name}_трехсторонний.pdf')
-        convert(temp_docx_path, pdf_output_path)
+        # Конвертация DOCX в PDF с использованием LibreOffice
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{sender_name}_{receiver_name}_трехсторонний.pdf'
+        pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
 
-        # print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
+        # Определяем команду для конвертации в зависимости от операционной системы
+        if platform.system() == "Windows":
+            libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+        else:
+            libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
+
+        libreoffice_command = [
+            libreoffice_path, '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_output_path), temp_docx_path
+        ]
+
+        # Выполняем команду
+        subprocess.run(libreoffice_command, check=True)
+
+        # Переименовываем файл
+        temp_pdf_path = os.path.join(os.path.dirname(pdf_output_path), 'temp_updated_document_triple.pdf')
+        if os.path.exists(temp_pdf_path):
+            os.rename(temp_pdf_path, pdf_output_path)
+
+        print(f'Документ успешно обновлен и конвертирован в PDF и сохранен как {pdf_output_path}')
         return pdf_output_path
 
 
