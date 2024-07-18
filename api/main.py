@@ -9,6 +9,11 @@ from datetime import datetime
 import shutil
 import threading
 import time
+import logging
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
@@ -149,7 +154,7 @@ class OrganizationResponse(OrganizationBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UserBase(BaseModel):
@@ -172,7 +177,7 @@ class UserResponse(UserBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class WorkTypeBase(BaseModel):
@@ -191,7 +196,7 @@ class WorkTypeResponse(WorkTypeBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ObjectBase(BaseModel):
@@ -212,7 +217,7 @@ class ObjectResponse(ObjectBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class BlockSectionBase(BaseModel):
@@ -233,7 +238,7 @@ class BlockSectionResponse(BlockSectionBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class FrontTransferBase(BaseModel):
@@ -270,7 +275,7 @@ class FrontTransferResponse(FrontTransferBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class FrontWorkforceBase(BaseModel):
@@ -284,7 +289,7 @@ class FrontWorkforceBase(BaseModel):
     user_id: Optional[int] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class FrontWorkforceCreate(FrontWorkforceBase):
@@ -299,14 +304,14 @@ class FrontWorkforceResponse(FrontWorkforceBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # FastAPI setup
 app = FastAPI()
 
 # Database session
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=86400)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=86400, max_overflow=10)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -320,16 +325,40 @@ def get_db():
         db.close()
 
 # Ping database function
+@app.on_event("startup")
+async def startup():
+    logger.info("Connecting to database...")
+    try:
+        with engine.connect() as connection:
+            logger.info("Database connected!")
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+
+@app.on_event("shutdown")
+async def shutdown():
+    logger.info("Disconnecting from database...")
+    try:
+        engine.dispose()
+        logger.info("Database disconnected!")
+    except Exception as e:
+        logger.error(f"Failed to disconnect from database: {e}")
+
+# Ping database function
 def ping_db():
     while True:
-        with engine.connect() as connection:
-            result = connection.execute(text("SELECT * FROM objects where name = 'МПК05'"))
-            for row in result:
-                print(row)
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(text("SELECT 1"))
+                result.close()
+            logger.info("Database ping successful")
+        except Exception as e:
+            logger.error(f"Database ping failed: {e}")
         time.sleep(3600)
 
 # Запуск пингера в отдельном потоке при старте приложения
 threading.Thread(target=ping_db, daemon=True).start()
+
+
 
 # CRUD operations
 def get_organization(db: Session, organization_id: int):
