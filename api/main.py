@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 
-DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
+DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgFrontBrusnika"
 Base = declarative_base()
 
 # Database models
@@ -406,7 +406,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/users/", response_model=List[UserResponse])
-def read_users(skip: int = 0, limit: int = 10, organization_id: Optional[int] = None, db: Session = Depends(get_db)):
+def read_users(skip: int = 0, limit: int = 100, organization_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(User)
     if organization_id is not None:
         query = query.filter(User.organization_id == organization_id)
