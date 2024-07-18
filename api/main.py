@@ -8,7 +8,7 @@ from typing import List, Optional, Union
 from datetime import datetime
 import shutil
 
-DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
+DATABASE_URL = "postgresql://postgres:12345@176.123.163.235:5432/tgfrontbrusnika"
 Base = declarative_base()
 
 # Database models
