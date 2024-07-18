@@ -102,6 +102,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             context.user_data['is_authorized'] = True
             await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
             context.user_data['stage'] = 'get_full_name'
+
+        elif str(password).lower() == 'secret_password_boss_12345':
+            context.user_data['is_authorized'] = True
+            context.user_data['organization_id'] = 3  # Устанавливаем организацию Босу
+            await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
+            context.user_data['stage'] = 'get_full_name'
+
         else:
             await update.message.reply_text('Пожалуйста, введите пароль для авторизации командой /start [пароль]:')
             context.user_data['stage'] = 'get_password'
@@ -118,6 +125,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
                 context.user_data['stage'] = 'get_full_name'
+
+            elif str(password).lower() == 'secret_password_boss_12345':
+                user_data['is_authorized'] = True
+                user_data['organization_id'] = 3  # Устанавливаем организацию БОСу
+                requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
+                await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
+                context.user_data['stage'] = 'get_full_name'
+
             else:
                 await update.message.reply_text('Пожалуйста, введите пароль для авторизации:')
                 context.user_data['stage'] = 'get_password'
@@ -131,33 +146,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if stage == 'get_full_name':
         full_name = text
         context.user_data['full_name'] = full_name
+        organization_id = context.user_data.get('organization_id')
 
         # Создаем пользователя в базе данных
         user_data = {
             'chat_id': user_id,
             'full_name': full_name,
             'is_authorized': context.user_data.get('is_authorized', False),
-            'organization': None  # Передаем organization как None
+            'organization_id': organization_id,  # Передаем organization как None
         }
         logger.info(f"Отправка данных в API для создания пользователя: {json.dumps(user_data, indent=2)}")
         response = requests.post(f'{DJANGO_API_URL}users/', json=user_data)
         logger.info(f"Ответ от API при создании пользователя: {response.status_code}, {response.text}")
         if response.status_code == 201:
-            response = requests.get(f'{DJANGO_API_URL}organizations/')
-            if response.status_code == 200:
-                organizations = response.json()
-                # Исключаем организацию с id = 3
-                filtered_organizations = [org for org in organizations if org['id'] != 3]
-                # Создание кнопок в колонку
-                keyboard = [
-                    [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in
-                    filtered_organizations
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
-                context.user_data['stage'] = 'choose_organization'
+            if organization_id:
+                # Запрос объектов для выбора
+                response = requests.get(f'{DJANGO_API_URL}objects/')
+                if response.status_code == 200:
+                    objects = response.json()
+                    # Создание кнопок в колонку
+                    keyboard = [
+                        [InlineKeyboardButton(obj['name'], callback_data=f'object_{obj["id"]}')] for obj in objects
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text('Выберите ваш объект:', reply_markup=reply_markup)
+                    context.user_data['stage'] = 'choose_object'
+                else:
+                    await update.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
             else:
-                await update.message.reply_text('Ошибка при получении списка организаций. Попробуйте снова.')
+                response = requests.get(f'{DJANGO_API_URL}organizations/')
+                if response.status_code == 200:
+                    organizations = response.json()
+                    # Исключаем организацию с id = 3
+                    filtered_organizations = [org for org in organizations if org['id'] != 3]
+                    # Создание кнопок в колонку
+                    keyboard = [
+                        [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in
+                        filtered_organizations
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
+                    context.user_data['stage'] = 'choose_organization'
+                else:
+                    await update.message.reply_text('Ошибка при получении списка организаций. Попробуйте снова.')
         else:
             await update.message.reply_text('Ошибка при создании пользователя. Попробуйте снова.')
 
@@ -179,6 +211,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 context.user_data['is_authorized'] = True
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
                 context.user_data['stage'] = 'get_full_name'
+
+        elif text == 'secret_password_boss_12345':
+            response = requests.get(f'{DJANGO_API_URL}users/{user_id}/')
+            if response.status_code == 200:
+                user_data = response.json()
+                user_data['is_authorized'] = True
+                user_data['organization_id'] = 3  # Устанавливаем организацию с ID = 2
+                response = requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
+                if response.status_code == 200:
+                    await update.message.reply_text(f'Вы успешно авторизованы, {user_data["full_name"]}!')
+                    await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
+                    context.user_data['stage'] = 'get_full_name'
+                else:
+                    await update.message.reply_text('Ошибка при обновлении данных. Попробуйте снова.')
+            else:
+                context.user_data['is_authorized'] = True
+                context.user_data['organization_id'] = 3  # Устанавливаем организацию с ID = 2
+                await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
+                context.user_data['stage'] = 'get_full_name'
+
         else:
             await update.message.reply_text('Неверный пароль, попробуйте еще раз:')
 
@@ -713,6 +765,45 @@ async def confirm_transfer_data(query: Update, context: ContextTypes.DEFAULT_TYP
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text(f'Подтвердите данные:\n{transfer_info}', reply_markup=reply_markup)
+
+async def change_object_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    user_id = query.from_user.id
+
+    if data.startswith('object_'):
+        object_id = int(data.split('_')[1])
+
+        # Получаем текущие данные пользователя
+        response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+        if response.status_code == 200:
+            user_data = response.json()
+            user_data['object_id'] = object_id  # Обновляем поле object_id
+
+            logger.info(f"Отправка данных в API: {json.dumps(user_data, indent=2)}")
+            response = requests.put(f'{DJANGO_API_URL}users/{user_data["id"]}/', json=user_data)
+            logger.info(f"Ответ от API: {response.status_code}, {response.text}")
+
+            if response.status_code == 200:
+                reply_keyboard = [
+                    [KeyboardButton("/info")],
+                    [KeyboardButton("/start")],
+                    [KeyboardButton("/choice")]
+                ]
+                reply_markup_kb = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+                await query.message.delete()
+                await query.message.reply_text(
+                    'Объект успешно выбран!',
+                    reply_markup=reply_markup_kb
+                )
+                user_data = response.json()
+                await send_main_menu(query.message.chat.id, context, user_data['full_name'], user_data['organization_id'])
+            else:
+                await query.message.reply_text('Ошибка при сохранении данных. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
 
 
 async def handle_transfer_confirmation(query: Update, context: ContextTypes.DEFAULT_TYPE, confirmed: bool) -> None:
@@ -2853,7 +2944,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif data == 'fronts_in_process':
         await view_fronts_in_process(update, context)
 
-
+    elif data.startswith('object_'):
+        await change_object_id(update, context)
 
     elif data == 'issue_front':
 
