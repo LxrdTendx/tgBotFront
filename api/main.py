@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 
-DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgFrontBrusnika"
+DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
 
 # Database models
