@@ -1,12 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union
 from datetime import datetime
 import shutil
+import threading
+import time
 
 DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
@@ -304,7 +306,7 @@ class FrontWorkforceResponse(FrontWorkforceBase):
 app = FastAPI()
 
 # Database session
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=86400)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -317,6 +319,17 @@ def get_db():
     finally:
         db.close()
 
+# Ping database function
+def ping_db():
+    while True:
+        with engine.connect() as connection:
+            result = connection.execute(text("SELECT * FROM objects where name = 'МПК05'"))
+            for row in result:
+                print(row)
+        time.sleep(3600)
+
+# Запуск пингера в отдельном потоке при старте приложения
+threading.Thread(target=ping_db, daemon=True).start()
 
 # CRUD operations
 def get_organization(db: Session, organization_id: int):
