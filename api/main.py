@@ -738,8 +738,8 @@ def create_volume(volume: VolumeCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/volumes/", response_model=List[VolumeResponse])
-def read_volumes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    volumes = db.query(Volume).offset(skip).limit(limit).all()
+def read_volumes(skip: int = 0, db: Session = Depends(get_db)):
+    volumes = db.query(Volume).offset(skip).all()
     return volumes
 
 
