@@ -15,6 +15,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgFrontBrusnika"
 DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
 
@@ -691,8 +692,8 @@ def create_front_workforce(front_workforce: FrontWorkforceCreate, db: Session = 
 
 
 @app.get("/frontworkforces/", response_model=List[FrontWorkforceResponse])
-def read_front_workforces(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    front_workforces = db.query(FrontWorkforce).offset(skip).limit(limit).all()
+def read_front_workforces(skip: int = 0, db: Session = Depends(get_db)):
+    front_workforces = db.query(FrontWorkforce).offset(skip).all()
     return front_workforces
 
 
