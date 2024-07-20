@@ -527,26 +527,49 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         organization_name = "Неизвестная организация"
         is_general_contractor = False
 
+    # Если пользователь - генеральный подрядчик, получить его объект
+    if is_general_contractor:
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{chat_id}/')
+        if user_response.status_code == 200:
+            user_data = user_response.json()
+            object_id = user_data.get('object_id')
+            if object_id:
+                object_response = requests.get(f'{DJANGO_API_URL}objects/{object_id}/')
+                if object_response.status_code == 200:
+                    object_data = object_response.json()
+                    object_name = object_data.get('name', 'Неизвестный объект')
+                else:
+                    object_name = 'Неизвестный объект'
+            else:
+                object_name = 'Объект не указан'
+        else:
+            object_name = 'Ошибка при получении данных пользователя'
+    else:
+        object_name = ''
+
     if is_general_contractor:
         keyboard = [
             [InlineKeyboardButton("\U0001F4C4 Просмотр переданных фронтов", callback_data='view_fronts')],
             [InlineKeyboardButton("\U0001F6E0 Просмотр фронтов в работе", callback_data='fronts_in_process')],
             [InlineKeyboardButton("\U0001F4CB Выдать фронт", callback_data='issue_front')],
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
-            [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')]
+            [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')],
+            [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')]
         ]
+        text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Вы привязаны к объекту "{object_name}". Выберите действие:'
     else:
         keyboard = [
             [InlineKeyboardButton("\U0001F4C4 Фронт", callback_data='front_menu')],
             [InlineKeyboardButton("\U0001F477 Численность", callback_data='workforce_menu')],
             [InlineKeyboardButton("📐 Объем", callback_data='volume_menu')],
         ]
+        text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Выберите действие:'
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message = await context.bot.send_message(
         chat_id=chat_id,
-        text=f'Здравствуйте, {full_name} из организации "{organization_name}"! Выберите действие:',
+        text=text,
         reply_markup=reply_markup
     )
     context.user_data['main_menu_message_id'] = message.message_id
@@ -1970,7 +1993,7 @@ async def send_workforce_to_google_sheets(object_name, block_section_name, floor
             "D": work_type_name,
             "E": organization_name,
             "F": workforce_count,
-            "G": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "G": datetime.now().strftime("%d.%m.%Y"),
             "H": id_workforce,
         }
 
@@ -2470,7 +2493,7 @@ async def update_workforce_in_google_sheets(workforce_id, object_id, block_secti
             "D": work_type_data['name'],
             "E": organization_data['organization'],
             "F": new_workforce_count,
-            "G": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "G": datetime.now().strftime("%d.%m.%Y"),
             "H": workforce_id,  # Используется для поиска записи в Google Sheets
         }
 
@@ -2773,7 +2796,7 @@ async def send_volume_to_google_sheets(object_name, block_section_name, floor, w
             "C": block_section_name,
             "D": floor,
             "E": work_type_name,
-            "F": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "F": datetime.now().strftime("%d.%m.%Y"),
             "G": organization_name,
             "H": volume_count
         }
@@ -2956,7 +2979,7 @@ async def update_volume_in_google_sheets(volume_id, object_id, block_section_id,
             "C": block_section_data['name'],
             "D": floor,
             "E": work_type_data['name'],
-            "F": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "F": datetime.now().strftime("%d.%m.%Y"),
             "G": organization_data['organization'],
             "H": new_volume_count
         }
@@ -3295,7 +3318,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                     # Фильтруем объекты по user_object_ids
                     filtered_objects = [obj for obj in objects if obj['id'] == user_object_id]
-
+                    print(objects)
                     if filtered_objects:
                         keyboard = [
                             [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in filtered_objects
@@ -3321,12 +3344,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}organizations/')
         if response.status_code == 200:
             organizations = response.json()
-            keyboard = [
-                [InlineKeyboardButton(org['organization'], callback_data=f'issue_org_{org["id"]}')] for org in organizations if org['organization'] != "БОС"
+            # Фильтруем организации, у которых в object_ids есть выбранный object_id
+            filtered_organizations = [
+                org for org in organizations if org.get('object_ids') and object_id in org['object_ids']
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text('Выберите организацию:', reply_markup=reply_markup)
-            context.user_data['stage'] = 'issue_choose_organization'
+            if filtered_organizations:
+                keyboard = [
+                    [InlineKeyboardButton(org['organization'], callback_data=f'issue_org_{org["id"]}')] for org in
+                    filtered_organizations if org['organization'] != "БОС"
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите организацию:', reply_markup=reply_markup)
+                context.user_data['stage'] = 'issue_choose_organization'
+            else:
+                await query.message.reply_text('Нет доступных организаций для выбранного объекта.')
+
 
         else:
             await query.message.reply_text('Ошибка при получении списка организаций. Попробуйте снова.')
@@ -3931,7 +3963,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'volume_floor_{i}')] for i in
                         range(-2, number_of_floors + 1)]
-            keyboard.insert(0, [InlineKeyboardButton('Пропустить', callback_data='volume_floor_None')])
+            # keyboard.insert(0, [InlineKeyboardButton('Пропустить', callback_data='volume_floor_None')])
             keyboard.append([InlineKeyboardButton('Кровля', callback_data='volume_floor_roof')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
@@ -4121,6 +4153,52 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         day = int(data.split('_')[1])
         month = context.user_data['selected_volumemonth']
         await view_specific_day_volume(query, context, day, month)
+
+    elif data == 'changeobject':
+        await query.message.delete()
+        response = requests.get(f'{DJANGO_API_URL}objects/')
+        if response.status_code == 200:
+            objects = response.json()
+            if objects:
+                keyboard = [
+                    [InlineKeyboardButton(obj['name'], callback_data=f'select_object_{obj["id"]}')] for obj in objects
+                ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите новый объект:', reply_markup=reply_markup)
+                context.user_data['stage'] = 'choose_new_object'
+            else:
+                await query.message.reply_text('Нет доступных объектов.')
+        else:
+            await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
+
+    elif data.startswith('select_object_'):
+        await query.message.delete()
+        new_object_id = int(data.split('_')[2])
+
+        # Получаем user_id по chat_id
+        chat_id = query.message.chat_id
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{chat_id}/')
+        if user_response.status_code == 200:
+            user_data = user_response.json()
+            user_id = user_data['id']
+
+            # Обновляем object_id пользователя с использованием метода PUT
+            user_data['object_id'] = new_object_id
+            response = requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
+            if response.status_code == 200:
+                await query.message.reply_text('Ваш объект был успешно изменен.')
+
+                # Возвращаем пользователя в главное меню
+                full_name = user_data['full_name']
+                organization_id = user_data['organization_id']
+                await send_main_menu(chat_id, context, full_name, organization_id)
+            else:
+                await query.message.reply_text('Ошибка при обновлении объекта. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
+
 
 def main() -> None:
     # Вставьте свой токен
