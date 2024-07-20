@@ -132,6 +132,24 @@ class FrontWorkforce(Base):
 
 
 
+class Volume(Base):
+    __tablename__ = "volumes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    work_type_id = Column(Integer, ForeignKey("worktypes.id"), nullable=True)
+    volume = Column(Integer, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    date = Column(DateTime, default=datetime.utcnow)  # Добавляем поле с датой
+    object_id = Column(Integer, ForeignKey("objects.id"))  # Добавляем поле object_id
+    organization_id = Column(Integer, ForeignKey("organizations.id"))  # Добавляем поле organization_id
+    block_section_id = Column(Integer, ForeignKey("blocksections.id"))  # Добавляем поле block_section_id
+    floor = Column(String)  # Добавляем поле floor
+
+    work_type = relationship("WorkType")
+    user = relationship("User")
+    object = relationship("Object")
+    organization = relationship("Organization")
+    block_section = relationship("BlockSection")
 
 
 # Pydantic models
@@ -307,6 +325,39 @@ class FrontWorkforceResponse(FrontWorkforceBase):
         from_attributes = True
 
 
+
+class VolumeBase(BaseModel):
+    work_type_id: Optional[int] = None
+    volume: Optional[int] = None
+    user_id: Optional[int] = None
+    date: Optional[datetime] = None  # Добавляем поле с датой
+    object_id: Optional[int] = None  # Добавляем поле object_id
+    organization_id: Optional[int] = None  # Добавляем поле organization_id
+    block_section_id: Optional[int] = None  # Добавляем поле block_section_id
+    floor: Optional[str] = None  # Добавляем поле floor
+
+    class Config:
+        from_attributes = True
+
+    class Config:
+        from_attributes = True
+
+
+class VolumeCreate(VolumeBase):
+    pass
+
+
+class VolumeUpdate(VolumeBase):
+    pass
+
+
+class VolumeResponse(VolumeBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
 # FastAPI setup
 app = FastAPI()
 
@@ -388,6 +439,8 @@ def get_block_section(db: Session, block_section_id: int):
 def get_front_transfer(db: Session, front_transfer_id: int):
     return db.query(FrontTransfer).filter(FrontTransfer.id == front_transfer_id).first()
 
+def get_volume(db: Session, volume_id: int):
+    return db.query(Volume).filter(Volume.id == volume_id).first()
 
 # Routes
 @app.post("/organizations/", response_model=OrganizationResponse)
@@ -674,6 +727,65 @@ def delete_front_workforce(front_workforce_id: int, db: Session = Depends(get_db
     db.commit()
     return front_workforce
 
+@app.post("/volumes/", response_model=VolumeResponse, status_code=201)
+def create_volume(volume: VolumeCreate, db: Session = Depends(get_db)):
+    db_volume = Volume(**volume.dict())
+    db.add(db_volume)
+    db.commit()
+    db.refresh(db_volume)
+    return db_volume
+
+
+@app.get("/volumes/", response_model=List[VolumeResponse])
+def read_volumes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    volumes = db.query(Volume).offset(skip).limit(limit).all()
+    return volumes
+
+
+@app.get("/volumes/{volume_id}", response_model=VolumeResponse)
+def read_volume(volume_id: int, db: Session = Depends(get_db)):
+    volume = get_volume(db, volume_id=volume_id)
+    if volume is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+    return volume
+
+
+
+@app.patch("/volumes/{volume_id}", response_model=VolumeResponse)
+def patch_volume(volume_id: int, volume: VolumeUpdate, db: Session = Depends(get_db)):
+    db_volume = get_volume(db, volume_id=volume_id)
+    if db_volume is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+
+    for key, value in volume.dict(exclude_unset=True).items():
+        setattr(db_volume, key, value)
+
+    db.commit()
+    db.refresh(db_volume)
+    return db_volume
+
+@app.put("/volumes/{volume_id}", response_model=VolumeResponse)
+def update_volume(volume_id: int, volume: VolumeUpdate, db: Session = Depends(get_db)):
+    db_volume = get_volume(db, volume_id=volume_id)
+    if db_volume is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+
+    for key, value in volume.dict().items():
+        setattr(db_volume, key, value)
+
+    db.commit()
+    db.refresh(db_volume)
+    return db_volume
+
+
+@app.delete("/volumes/{volume_id}", response_model=VolumeResponse)
+def delete_volume(volume_id: int, db: Session = Depends(get_db)):
+    volume = get_volume(db, volume_id=volume_id)
+    if volume is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+    db.delete(volume)
+    db.commit()
+    return volume
 
 # Запуск FastAPI
 if __name__ == "__main__":

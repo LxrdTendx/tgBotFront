@@ -533,12 +533,13 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
             [InlineKeyboardButton("\U0001F6E0 Просмотр фронтов в работе", callback_data='fronts_in_process')],
             [InlineKeyboardButton("\U0001F4CB Выдать фронт", callback_data='issue_front')],
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
-
+            [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')]
         ]
     else:
         keyboard = [
             [InlineKeyboardButton("\U0001F4C4 Фронт", callback_data='front_menu')],
             [InlineKeyboardButton("\U0001F477 Численность", callback_data='workforce_menu')],
+            [InlineKeyboardButton("📐 Объем", callback_data='volume_menu')],
         ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1337,7 +1338,7 @@ async def generate_pdf(front_id: int) -> str:
         # print("Документ сохранен: ", temp_docx_path)
 
         # Конвертация DOCX в PDF с использованием LibreOffice
-        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_двусторонний.pdf'
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{receiver_name}_{approval_at}_двусторонний.pdf'
         pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
 
         # Определяем команду для конвертации в зависимости от операционной системы
@@ -2477,6 +2478,7 @@ async def update_workforce_in_google_sheets(workforce_id, object_id, block_secti
             response.raise_for_status()
             return await response.json()
 
+
 async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get('expecting_workforce_count'):
         try:
@@ -2554,7 +2556,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                     f"{context.user_data['workforce_work_type_name']}\n"
                     f"{context.user_data['workforce_block_section_name']} Этаж {floor}",
                     reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton(f"Повторить {context.user_data['workforce_work_type_name']}",
+                        [[InlineKeyboardButton(f"Повторить для {context.user_data['workforce_work_type_name']}",
                                                callback_data='repeat_workforce')],
                         [InlineKeyboardButton("Назад", callback_data='main_menu')]]
                     )
@@ -2620,6 +2622,11 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text('Пожалуйста, введите корректное число.')
 
         context.user_data['expecting_new_workforce_count'] = False
+
+    elif context.user_data.get('expecting_volume_count'):
+        await handle_volume_count(update, context)
+    elif context.user_data.get('expecting_new_volume_count'):
+        await handle_new_volume_count(update, context)
 
     else:
         await handle_message(update, context)
@@ -2714,6 +2721,325 @@ async def delete_workforce_in_google_sheets(workforce_id):
         async with session.post(WEBHOOK_URL, json=data) as response:
             response.raise_for_status()
             return await response.json()
+
+
+async def handle_transfer_volume(query: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_chat_id = query.from_user.id
+    await query.message.delete()
+
+    # Получаем данные организации пользователя
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}/')
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        organization_id = user_data['organization_id']
+        context.user_data['organization_id'] = organization_id
+
+        # Получаем данные организации, чтобы узнать object_ids
+        organization_response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+        if organization_response.status_code == 200:
+            organization_data = organization_response.json()
+            organization_object_ids = organization_data.get('object_ids', [])
+        else:
+            await query.message.reply_text('Ошибка при получении данных организации. Попробуйте снова.')
+            return
+    else:
+        await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
+        return
+
+    # Получаем объекты
+    response = requests.get(f'{DJANGO_API_URL}objects/')
+    if response.status_code == 200:
+        objects = response.json()
+        filtered_objects = [obj for obj in objects if obj['id'] in organization_object_ids]
+        if filtered_objects:
+            keyboard = [
+                [InlineKeyboardButton(obj['name'], callback_data=f'volume_obj_{obj["id"]}')] for obj in filtered_objects
+            ]
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='volume_menu')])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
+        else:
+            await query.message.reply_text('Нет доступных объектов для данной организации.')
+    else:
+        await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
+
+async def send_volume_to_google_sheets(object_name, block_section_name, floor, work_type_name, organization_name, volume_count, id_volume):
+    async with aiohttp.ClientSession() as session:
+        data = {
+            "action": "volume",
+            "A": id_volume,
+            "B": object_name,
+            "C": block_section_name,
+            "D": floor,
+            "E": work_type_name,
+            "F": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "G": organization_name,
+            "H": volume_count
+        }
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
+
+async def handle_volume_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        volume_count = int(update.message.text)
+        object_id = context.user_data['volume_object_id']
+        block_section_id = context.user_data['volume_block_section_id']
+        floor = context.user_data['volume_floor']
+        if floor == 'roof':
+            floor = 'Кровля'
+        work_type_id = context.user_data['volume_work_type_id']
+        organization_id = context.user_data['organization_id']
+        user_id = update.message.from_user.id
+
+        # Получаем id пользователя в базе
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+        if user_response.status_code == 200:
+            user_name = user_response.json()['id']
+        else:
+            await update.message.reply_text('Ошибка при получении id пользователя')
+            return
+
+        # Получаем имя блока/секции
+        block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
+        if block_section_response.status_code == 200:
+            block_section_name = block_section_response.json()['name']
+            context.user_data['volume_block_section_name'] = block_section_name
+        else:
+            await update.message.reply_text('Ошибка при получении данных блока/секции. Попробуйте снова.')
+            return
+
+        # Получаем имя объекта
+        object_response = requests.get(f'{DJANGO_API_URL}objects/{object_id}/')
+        if object_response.status_code == 200:
+            object_name = object_response.json()['name']
+        else:
+            await update.message.reply_text('Ошибка при получении данных объекта. Попробуйте снова.')
+            return
+
+        # Получаем имя вида работ
+        work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{work_type_id}/')
+        if work_type_response.status_code == 200:
+            work_type_name = work_type_response.json()['name']
+            context.user_data['volume_work_type_name'] = work_type_name
+        else:
+            await update.message.reply_text('Ошибка при получении данных вида работ. Попробуйте снова.')
+            return
+
+        # Получаем имя организации
+        organization_response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+        if organization_response.status_code == 200:
+            organization_name = organization_response.json()['organization']
+        else:
+            await update.message.reply_text('Ошибка при получении данных организации. Попробуйте снова.')
+            return
+
+        volume_data = {
+            'object_id': object_id,
+            'block_section_id': block_section_id,
+            'floor': floor,
+            'work_type_id': work_type_id,
+            'organization_id': organization_id,
+            'volume': volume_count,
+            'date': datetime.now().isoformat(),
+            'user_id': user_name
+        }
+
+        response = requests.post(f'{DJANGO_API_URL}volumes/', json=volume_data)
+
+        if response.status_code == 201:
+            id_volume = response.json()['id']
+            await update.message.reply_text(
+                f"Объем успешно передан на вид работ: \n"
+                f"{context.user_data['volume_work_type_name']}\n"
+                f"{context.user_data['volume_block_section_name']} Этаж {floor}",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton(f"Повторить для {context.user_data['volume_work_type_name']}",
+                                           callback_data='repeat_volume')],
+                    [InlineKeyboardButton("Назад", callback_data='main_menu')]]
+                )
+            )
+            await send_volume_to_google_sheets(
+                object_name,
+                block_section_name,
+                floor,
+                work_type_name,
+                organization_name,
+                volume_count,
+                id_volume,
+            )
+        else:
+            await update.message.reply_text(f'Ошибка при передаче объема: {response.text}')
+    except ValueError:
+        await update.message.reply_text('Пожалуйста, введите корректное число.')
+
+    context.user_data['expecting_volume_count'] = False
+
+async def handle_new_volume_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        new_volume_count = int(update.message.text)
+        volume_id = context.user_data['volume_id_to_refactor']
+
+        # Получаем данные о текущей записи
+        response = requests.get(f'{DJANGO_API_URL}volumes/{volume_id}/')
+        if response.status_code == 200:
+            volume_data = response.json()
+
+            # Обновляем данные в базе данных
+            volume_data['volume'] = new_volume_count
+            update_response = requests.patch(f'{DJANGO_API_URL}volumes/{volume_id}/',
+                                             json=volume_data)
+
+            print(update_response.json())
+            if update_response.status_code == 200:
+                await update.message.reply_text('Объем успешно обновлен.')
+
+                # Получение данных для вызова send_main_menu
+                user_data = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat.id}/').json()
+                full_name = user_data.get('full_name', 'Пользователь')
+                organization_id = user_data.get('organization_id', None)
+                await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+
+
+                # Отправка данных в Google Sheets
+                await update_volume_in_google_sheets(
+                    volume_data['id'],
+                    volume_data['object_id'],
+                    volume_data['block_section_id'],
+                    volume_data['floor'],
+                    volume_data['work_type_id'],
+                    volume_data['organization_id'],
+                    new_volume_count
+                )
+
+            else:
+                await update.message.reply_text('Ошибка при обновлении объема в базе данных.')
+        else:
+            await update.message.reply_text('Ошибка при получении данных объема.')
+    except ValueError:
+        await update.message.reply_text('Пожалуйста, введите корректное число.')
+
+    context.user_data['expecting_new_volume_count'] = False
+
+
+
+async def handle_delete_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        volume_id = context.user_data['volume_id_to_delete']
+
+        # Удаляем данные из базы данных
+        delete_response = requests.delete(f'{DJANGO_API_URL}volumes/{volume_id}/')
+        if delete_response.status_code == 200:
+            await update.message.reply_text('Запись успешно удалена.')
+
+            # Отправка данных в Google Sheets
+            await delete_volume_in_google_sheets(volume_id)
+        else:
+            await update.message.reply_text('Ошибка при удалении записи из базы данных.')
+    except Exception as e:
+        await update.message.reply_text(f'Ошибка: {str(e)}')
+
+async def update_volume_in_google_sheets(volume_id, object_id, block_section_id, floor, work_type_id, organization_id, new_volume_count):
+    async with aiohttp.ClientSession() as session:
+        # Получение дополнительных данных
+        object_data = await get_data_from_api(session, f"/objects/{object_id}")
+        block_section_data = await get_data_from_api(session, f"/blocksections/{block_section_id}")
+        work_type_data = await get_data_from_api(session, f"/worktypes/{work_type_id}")
+        organization_data = await get_data_from_api(session, f"/organizations/{organization_id}")
+
+        data = {
+            "action": "update_volume",
+            "A": volume_id,
+            "B": object_data['name'],
+            "C": block_section_data['name'],
+            "D": floor,
+            "E": work_type_data['name'],
+            "F": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "G": organization_data['organization'],
+            "H": new_volume_count
+        }
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
+
+
+async def delete_volume_in_google_sheets(volume_id):
+    async with aiohttp.ClientSession() as session:
+
+        data = {
+            "action": "delete_volume",
+            "A": volume_id,
+        }
+        print(data)
+
+        async with session.post(WEBHOOK_URL, json=data) as response:
+            response.raise_for_status()
+            return await response.json()
+
+async def view_today_volume(query: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{query.message.chat.id}/').json()
+    user_object_id = user_data.get('object_id')
+    today = datetime.now().date()
+
+    response = requests.get(f'{DJANGO_API_URL}volumes/')
+    if response.status_code == 200:
+        volumes = response.json()
+        today_volumes = [vol for vol in volumes if parser.parse(vol['date']).date() == today and vol['object_id'] == user_object_id]
+        if today_volumes:
+            message = "📐 *Объемы за сегодня:*\n"
+            for vol in today_volumes:
+                block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{vol["block_section_id"]}/').json()['name']
+                work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{vol["work_type_id"]}/').json()['name']
+                organization_name = requests.get(f'{DJANGO_API_URL}organizations/{vol["organization_id"]}/').json()['organization']
+                floor_text = f"— Этаж {vol['floor']}" if vol['floor'] and vol['floor'] != "None" else ""
+                message += (
+                    f"{vol['volume']} м³ — {work_type_name} — {block_section_name} {floor_text} — {organization_name}\n\n"
+                )
+            await query.message.reply_text(
+                text=message,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await query.message.reply_text("Сегодня объемы не передавались.")
+    else:
+        await query.message.reply_text('Ошибка при получении данных. Попробуйте снова.')
+
+    full_name = user_data.get('full_name', 'Пользователь')
+    organization_id = user_data.get('organization_id', None)
+    await send_main_menu(query.message.chat.id, context, full_name, organization_id)
+
+async def view_specific_day_volume(query: Update, context: ContextTypes.DEFAULT_TYPE, day: int, month: int) -> None:
+    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{query.message.chat.id}/').json()
+    user_object_id = user_data.get('object_id')
+    year = datetime.now().year
+    specific_date = datetime(year, month, day).date()
+
+    response = requests.get(f'{DJANGO_API_URL}volumes/')
+    if response.status_code == 200:
+        volumes = response.json()
+        specific_day_volumes = [vol for vol in volumes if parser.parse(vol['date']).date() == specific_date and vol['object_id'] == user_object_id]
+        if specific_day_volumes:
+            message = f"📐 *Объемы за {specific_date.strftime('%d.%m.%Y')}:*\n"
+            for vol in specific_day_volumes:
+                block_section_name = requests.get(f'{DJANGO_API_URL}blocksections/{vol["block_section_id"]}/').json()['name']
+                work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{vol["work_type_id"]}/').json()['name']
+                organization_name = requests.get(f'{DJANGO_API_URL}organizations/{vol["organization_id"]}/').json()['organization']
+                floor_text = f"— Этаж {vol['floor']}" if vol['floor'] and vol['floor'] != "None" else ""
+                message += (
+                    f"{vol['volume']} м³ — {work_type_name} — {block_section_name} {floor_text} — {organization_name}\n\n"
+                )
+            await query.message.reply_text(text=message, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await query.message.reply_text(f"Объемы за {specific_date.strftime('%d.%m.%Y')} не передавались.")
+    else:
+        await query.message.reply_text('Ошибка при получении данных. Попробуйте снова.')
+
+    full_name = user_data.get('full_name', 'Пользователь')
+    organization_id = user_data.get('organization_id', None)
+    await send_main_menu(query.message.chat.id, context, full_name, organization_id)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -3558,6 +3884,243 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         day = int(data.split('_')[1])
         month = context.user_data['selected_month']
         await view_specific_day_workforce(query, context, day, month)
+
+    elif data == 'volume_menu':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("📐 Передать объем", callback_data='volume_transfer')],
+            [InlineKeyboardButton("\U0000270F Редактировать объем", callback_data='volume_refactor')],
+            [InlineKeyboardButton("\U0000274C Удалить запись", callback_data='volume_delete')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие для объема:', reply_markup=reply_markup)
+
+    elif data == 'volume_transfer':
+        await handle_transfer_volume(query, context)
+
+    elif data.startswith('volume_obj_'):
+        await query.message.delete()
+        object_id = int(data.split('_')[2])
+        context.user_data['volume_object_id'] = object_id
+        common_work_types_ids = await get_common_work_types(object_id, context.user_data['organization_id'])
+        if common_work_types_ids:
+            ids_query = "&".join([f"ids={id}" for id in common_work_types_ids])
+            response = requests.get(f'{DJANGO_API_URL}worktypes/?{ids_query}')
+            if response.status_code == 200:
+                work_types = response.json()
+                keyboard = [
+                    [InlineKeyboardButton(work['name'], callback_data=f'volume_work_{work["id"]}')] for work in
+                    work_types
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Ошибка при получении списка видов работ. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Нет доступных видов работ для выбранного объекта и организации.')
+
+    elif data.startswith('volume_block_'):
+        await query.message.delete()
+        block_section_id = int(data.split('_')[2])
+        context.user_data['volume_block_section_id'] = block_section_id
+        response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
+        if response.status_code == 200:
+            block_section = response.json()
+            number_of_floors = block_section['number_of_floors']
+
+            keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'volume_floor_{i}')] for i in
+                        range(-2, number_of_floors + 1)]
+            keyboard.insert(0, [InlineKeyboardButton('Пропустить', callback_data='volume_floor_None')])
+            keyboard.append([InlineKeyboardButton('Кровля', callback_data='volume_floor_roof')])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
+        else:
+            await query.message.reply_text('Ошибка при получении информации о блоке или секции. Попробуйте снова.')
+
+    elif data.startswith('volume_floor_'):
+        await query.message.delete()
+        floor = data.split('_')[2]
+        context.user_data['volume_floor'] = floor
+        await query.message.reply_text('Введите объем в м³:')
+        context.user_data['expecting_volume_count'] = True
+
+    elif data.startswith('volume_work_'):
+        await query.message.delete()
+        work_type_id = int(data.split('_')[2])
+        context.user_data['volume_work_type_id'] = work_type_id
+        work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{work_type_id}/')
+        if work_type_response.status_code == 200:
+            work_type_name = work_type_response.json()['name']
+            context.user_data['volume_work_type_name'] = work_type_name
+            response = requests.get(
+                f'{DJANGO_API_URL}objects/{context.user_data["volume_object_id"]}/blocksections/')
+
+            if response.status_code == 200:
+                block_sections = response.json()
+                keyboard = [
+                    [InlineKeyboardButton(block['name'], callback_data=f'volume_block_{block["id"]}')] for block in
+                    block_sections
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Ошибка при получении списка блоков или секций. Попробуйте снова.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных вида работ. Попробуйте снова.')
+
+    elif data.startswith('delete_volume_'):
+        await query.message.delete()
+        volume_id = int(data.split('_')[2])
+        context.user_data['volume_id_to_delete'] = volume_id
+        await query.message.reply_text('Вы действительно хотите удалить эту запись?',
+                                       reply_markup=InlineKeyboardMarkup([
+                                           [InlineKeyboardButton("\U00002705 Да",
+                                                                 callback_data='confirm_delete_volume')],
+                                           [InlineKeyboardButton("\U0000274C Нет", callback_data='volume_menu')]
+                                       ]))
+
+    elif data == 'confirm_delete_volume':
+        await query.message.delete()
+        await handle_delete_volume(query, context)
+
+    elif data == 'repeat_volume':
+        await query.edit_message_reply_markup(reply_markup=None)
+        response = requests.get(f'{DJANGO_API_URL}objects/{context.user_data["volume_object_id"]}/blocksections/')
+        if response.status_code == 200:
+            block_sections = response.json()
+            keyboard = [
+                [InlineKeyboardButton(block['name'], callback_data=f'volume_block_{block["id"]}')] for block in
+                block_sections
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
+        else:
+            await query.message.reply_text('Ошибка при получении списка блоков или секций. Попробуйте снова.')
+
+    elif data == 'volume_refactor':
+        await query.message.delete()
+        today = datetime.now().date().isoformat()
+        response = requests.get(f'{DJANGO_API_URL}volumes/')
+
+        if response.status_code == 200:
+            volumes = response.json()
+            user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/').json()
+            user_id = user_data.get('id')
+
+            # Фильтруем записи только за сегодняшний день и для текущего объекта
+            today_volumes = [
+                vol for vol in volumes
+                if parser.parse(vol['date']).date().isoformat() == today and vol['user_id'] == user_id
+            ]
+
+            if today_volumes:
+                buttons = []
+                for vol in today_volumes:
+                    work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{vol["work_type_id"]}/').json()['name']
+                    block_section_name = \
+                        requests.get(f'{DJANGO_API_URL}blocksections/{vol["block_section_id"]}/').json()['name']
+                    button_text = f"{vol['volume']} - {work_type_name} - {block_section_name} - Этаж {vol['floor']}"
+                    buttons.append([InlineKeyboardButton(button_text, callback_data=f'refactorvolume_{vol["id"]}')])
+
+                reply_markup = InlineKeyboardMarkup(buttons)
+                await query.message.reply_text('Выберите объем для редактирования:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Сегодня нет объемов для редактирования.')
+        else:
+            await query.message.reply_text('Ошибка при получении списка объемов. Попробуйте снова.')
+
+    elif data == 'volume_delete':
+        await query.message.delete()
+        today = datetime.now().date().isoformat()
+        response = requests.get(f'{DJANGO_API_URL}volumes/')
+
+        if response.status_code == 200:
+            volumes = response.json()
+            user_data = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/').json()
+            user_id = user_data.get('id')
+
+            # Фильтруем записи только за сегодняшний день и для текущего объекта
+            today_volumes = [
+                vol for vol in volumes
+                if parser.parse(vol['date']).date().isoformat() == today and vol['user_id'] == user_id
+            ]
+            if today_volumes:
+                buttons = []
+                for vol in today_volumes:
+                    work_type_name = requests.get(f'{DJANGO_API_URL}worktypes/{vol["work_type_id"]}/').json()['name']
+                    block_section_name = \
+                        requests.get(f'{DJANGO_API_URL}blocksections/{vol["block_section_id"]}/').json()['name']
+                    floor_text = f"— Этаж {vol['floor']}" if vol['floor'] and vol['floor'] != "None" else ""
+                    button_text = f"{vol['volume']} - {work_type_name} - {block_section_name} {floor_text}"
+                    buttons.append([InlineKeyboardButton(button_text, callback_data=f'delete_volume_{vol["id"]}')])
+
+                reply_markup = InlineKeyboardMarkup(buttons)
+                await query.message.reply_text('Выберите запись объема для удаления:', reply_markup=reply_markup)
+            else:
+                await query.message.reply_text('Сегодня не было передано объемов.')
+        else:
+            await query.message.reply_text('Ошибка при получении данных об объеме.')
+
+    elif data.startswith('refactorvolume_'):
+        await query.message.delete()
+        volume_id = int(data.split('_')[1])
+        context.user_data['volume_id_to_refactor'] = volume_id
+        await query.message.reply_text('Введите новый объем:')
+        context.user_data['expecting_new_volume_count'] = True
+
+    elif data == 'view_volume':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("\U0001F4C6 Сегодня", callback_data='view_today_volume')],
+            [InlineKeyboardButton("\U0001F50D Определенный день", callback_data='choose_volumemonth')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие для объемов:', reply_markup=reply_markup)
+
+    elif data == 'view_today_volume':
+        await query.message.delete()
+        await view_today_volume(query, context)
+
+    elif data == 'choose_volumemonth':
+        await query.message.delete()
+
+        # Разбиваем месяцы на три строки по четыре месяца в строке
+        months = [
+            ["Январь", "Февраль", "Март", "Апрель"],
+            ["Май", "Июнь", "Июль", "Август"],
+            ["Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+        ]
+
+        keyboard = [
+            [InlineKeyboardButton(month, callback_data=f'volumemonth_{i * 4 + j + 1}') for j, month in enumerate(row)]
+            for i, row in enumerate(months)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите месяц:', reply_markup=reply_markup)
+
+    elif data.startswith('volumemonth_'):
+        await query.message.delete()
+        month = int(data.split('_')[1])
+        context.user_data['selected_volumemonth'] = month
+        days_in_month = (datetime(2024, month % 12 + 1, 1) - timedelta(days=1)).day
+
+        # Разбиваем дни на строки по 7 дней в каждой строке
+        keyboard = [
+            [InlineKeyboardButton(str(day), callback_data=f'volumeday_{day}') for day in
+             range(i, min(i + 7, days_in_month + 1))]
+            for i in range(1, days_in_month + 1, 7)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.reply_text('Выберите день:', reply_markup=reply_markup)
+
+    elif data.startswith('volumeday_'):
+        await query.message.delete()
+        day = int(data.split('_')[1])
+        month = context.user_data['selected_volumemonth']
+        await view_specific_day_volume(query, context, day, month)
 
 def main() -> None:
     # Вставьте свой токен
