@@ -78,7 +78,7 @@ async def choose_organization(update: Update, context: ContextTypes.DEFAULT_TYPE
     if response.status_code == 200:
         organizations = response.json()
         # Исключаем организацию с id = 3
-        filtered_organizations = [org for org in organizations if org['id'] != 3]
+        filtered_organizations = [org for org in organizations if org['organization'] != "БОС"]
         # Создание кнопок в колонку
         keyboard = [
             [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in filtered_organizations
@@ -517,15 +517,17 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         )
         return
 
-    # Получаем имя организации по ID
+    # Получаем информацию об организации по ID
     response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
     if response.status_code == 200:
         organization_data = response.json()
         organization_name = organization_data['organization']
         is_general_contractor = organization_data.get('is_general_contractor', False)
+        is_factory = organization_data.get('factory', False)
     else:
         organization_name = "Неизвестная организация"
         is_general_contractor = False
+        is_factory = False
 
     # Если пользователь - генеральный подрядчик, получить его объект
     if is_general_contractor:
@@ -547,16 +549,23 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
     else:
         object_name = ''
 
+    # Формируем клавиатуру на основе типа пользователя
     if is_general_contractor:
         keyboard = [
-            [InlineKeyboardButton("\U0001F4C4 Просмотр переданных фронтов", callback_data='view_fronts')],
-            [InlineKeyboardButton("\U0001F6E0 Просмотр фронтов в работе", callback_data='fronts_in_process')],
-            [InlineKeyboardButton("\U0001F4CB Выдать фронт", callback_data='issue_front')],
+            [InlineKeyboardButton("\U0001F4C4 Фронт работ", callback_data='frontbutton')],
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
             [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')],
-            [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')]
+            [InlineKeyboardButton("🔄 Сменить объект", callback_data='change_object')]
         ]
         text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Вы привязаны к объекту "{object_name}". Выберите действие:'
+    elif is_factory:
+        keyboard = [
+            [InlineKeyboardButton("🏭 Факт на производство", callback_data='fact_production')],
+            [InlineKeyboardButton("📋 СГП", callback_data='sgp')],
+            [InlineKeyboardButton("🚚 Отгрузка", callback_data='shipping')],
+            [InlineKeyboardButton("📝 Замечания", callback_data='remarks')]
+        ]
+        text = f'Здравствуйте, {full_name} с завода "{organization_name}"! Выберите действие:'
     else:
         keyboard = [
             [InlineKeyboardButton("\U0001F4C4 Фронт", callback_data='front_menu')],
@@ -1214,7 +1223,11 @@ async def view_fronts_in_process(update: Update, context: ContextTypes.DEFAULT_T
                 await update.callback_query.message.reply_text("Список текущих фронтов в работе:",
                                                                reply_markup=reply_markup)
             else:
-                await update.callback_query.message.reply_text("Нет доступных фронтов работ со статусом 'в работе'.")
+                keyboard = []
+                keyboard.append([InlineKeyboardButton("↻ Обновить", callback_data='fronts_in_process')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.callback_query.message.reply_text("Нет доступных фронтов работ со статусом 'в работе'.", reply_markup=reply_markup)
         else:
             await update.callback_query.message.reply_text(
                 "Ошибка при получении списка фронтов работ. Попробуйте снова.")
@@ -3133,6 +3146,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие для фронта:', reply_markup=reply_markup)
 
+    elif data == 'frontbutton':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("\U0001F4C4 Просмотр переданных фронтов", callback_data='view_fronts')],
+            [InlineKeyboardButton("\U0001F6E0 Просмотр фронтов в работе", callback_data='fronts_in_process')],
+            [InlineKeyboardButton("\U0001F4CB Выдать фронт", callback_data='issue_front')],
+            [InlineKeyboardButton("Назад", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите действие для фронта:', reply_markup=reply_markup)
     elif data == 'workforce_menu':
         await query.message.delete()
         keyboard = [

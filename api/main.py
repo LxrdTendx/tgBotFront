@@ -15,7 +15,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgFrontBrusnika"
+# DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
 
@@ -28,7 +28,7 @@ class Organization(Base):
     is_general_contractor = Column(Boolean, default=False)
     work_types_ids = Column(JSON, nullable=True, default=list)  # Добавляем новое поле
     object_ids = Column(JSON, nullable=True, default=list)
-
+    factory = Column(Boolean, default=False)  # Добавлено поле factory
 
 
 class User(Base):
@@ -153,13 +153,49 @@ class Volume(Base):
     block_section = relationship("BlockSection")
 
 
+class PrefabType(Base):
+    __tablename__ = "prefab_types"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+
+
+class Prefab(Base):
+    __tablename__ = "prefabs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prefab_type_id = Column(Integer, ForeignKey("prefab_types.id"), nullable=False)
+    prefab_subtype_id = Column(Integer, ForeignKey("prefab_subtypes.id"), nullable=False)
+    planned_delivery_date = Column(DateTime, nullable=False)
+    actual_delivery_date = Column(DateTime, nullable=True)
+    deficit = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    object_id = Column(Integer, ForeignKey("objects.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    comment = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+
+    prefab_type = relationship("PrefabType")
+    prefab_subtype = relationship("PrefabSubtype")
+    object = relationship("Object")
+    organization = relationship("Organization")
+
+class PrefabSubtype(Base):
+    __tablename__ = "prefab_subtypes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    prefabtype_id = Column(Integer, ForeignKey("prefab_types.id"), nullable=False)
+
+    prefab_type = relationship("PrefabType")
+
 # Pydantic models
 class OrganizationBase(BaseModel):
     organization: str
     is_general_contractor: bool
     work_types_ids: Optional[List[int]] = Field(default_factory=list)  # Добавляем новое поле
     object_ids: Optional[List[int]] = Field(default_factory=list)
-
+    factory: bool
 
 class OrganizationCreate(OrganizationBase):
     pass
@@ -359,6 +395,72 @@ class VolumeResponse(VolumeBase):
         from_attributes = True
 
 
+class PrefabTypeBase(BaseModel):
+    name: str
+
+
+class PrefabTypeCreate(PrefabTypeBase):
+    pass
+
+
+class PrefabTypeUpdate(PrefabTypeBase):
+    pass
+
+
+class PrefabTypeResponse(PrefabTypeBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PrefabBase(BaseModel):
+    prefab_type_id: int
+    prefab_subtype_id: int
+    planned_delivery_date: datetime
+    actual_delivery_date: Optional[datetime] = None
+    deficit: Optional[str] = None
+    quantity: int
+    object_id: Optional[int] = None
+    organization_id: Optional[int] = None
+    comment: Optional[str] = None
+    status: Optional[str] = None
+
+
+class PrefabCreate(PrefabBase):
+    pass
+
+
+class PrefabUpdate(PrefabBase):
+    pass
+
+
+class PrefabResponse(PrefabBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PrefabSubtypeBase(BaseModel):
+    name: str
+    prefabtype_id: int
+
+
+class PrefabSubtypeCreate(PrefabSubtypeBase):
+    pass
+
+
+class PrefabSubtypeUpdate(PrefabSubtypeBase):
+    pass
+
+
+class PrefabSubtypeResponse(PrefabSubtypeBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 # FastAPI setup
 app = FastAPI()
 
@@ -442,6 +544,70 @@ def get_front_transfer(db: Session, front_transfer_id: int):
 
 def get_volume(db: Session, volume_id: int):
     return db.query(Volume).filter(Volume.id == volume_id).first()
+
+def get_prefab_type(db: Session, prefab_type_id: int):
+    return db.query(PrefabType).filter(PrefabType.id == prefab_type_id).first()
+
+
+def create_prefab_type(db: Session, prefab_type: PrefabTypeCreate):
+    db_prefab_type = PrefabType(**prefab_type.dict())
+    db.add(db_prefab_type)
+    db.commit()
+    db.refresh(db_prefab_type)
+    return db_prefab_type
+
+
+def update_prefab_type(db: Session, prefab_type_id: int, prefab_type: PrefabTypeUpdate):
+    db_prefab_type = get_prefab_type(db, prefab_type_id)
+    if not db_prefab_type:
+        raise HTTPException(status_code=404, detail="PrefabType not found")
+    for key, value in prefab_type.dict().items():
+        setattr(db_prefab_type, key, value)
+    db.commit()
+    db.refresh(db_prefab_type)
+    return db_prefab_type
+
+
+def delete_prefab_type(db: Session, prefab_type_id: int):
+    db_prefab_type = get_prefab_type(db, prefab_type_id)
+    if not db_prefab_type:
+        raise HTTPException(status_code=404, detail="PrefabType not found")
+    db.delete(db_prefab_type)
+    db.commit()
+    return db_prefab_type
+
+
+def get_prefab(db: Session, prefab_id: int):
+    return db.query(Prefab).filter(Prefab.id == prefab_id).first()
+
+
+def create_prefab(db: Session, prefab: PrefabCreate):
+    db_prefab = Prefab(**prefab.dict())
+    db.add(db_prefab)
+    db.commit()
+    db.refresh(db_prefab)
+    return db_prefab
+
+
+def update_prefab(db: Session, prefab_id: int, prefab: PrefabUpdate):
+    db_prefab = get_prefab(db, prefab_id)
+    if not db_prefab:
+        raise HTTPException(status_code=404, detail="Prefab not found")
+    for key, value in prefab.dict().items():
+        setattr(db_prefab, key, value)
+    db.commit()
+    db.refresh(db_prefab)
+    return db_prefab
+
+
+def delete_prefab(db: Session, prefab_id: int):
+    db_prefab = get_prefab(db, prefab_id)
+    if not db_prefab:
+        raise HTTPException(status_code=404, detail="Prefab not found")
+    db.delete(db_prefab)
+    db.commit()
+    return db_prefab
+
 
 # Routes
 @app.post("/organizations/", response_model=OrganizationResponse)
@@ -787,6 +953,66 @@ def delete_volume(volume_id: int, db: Session = Depends(get_db)):
     db.delete(volume)
     db.commit()
     return volume
+
+
+
+@app.post("/prefab_types/", response_model=PrefabTypeResponse, status_code=201)
+def create_prefab_type(prefab_type: PrefabTypeCreate, db: Session = Depends(get_db)):
+    return create_prefab_type(db, prefab_type)
+
+
+@app.get("/prefab_types/{prefab_type_id}", response_model=PrefabTypeResponse)
+def read_prefab_type(prefab_type_id: int, db: Session = Depends(get_db)):
+    db_prefab_type = get_prefab_type(db, prefab_type_id)
+    if not db_prefab_type:
+        raise HTTPException(status_code=404, detail="PrefabType not found")
+    return db_prefab_type
+
+
+@app.put("/prefab_types/{prefab_type_id}", response_model=PrefabTypeResponse)
+def update_prefab_type(prefab_type_id: int, prefab_type: PrefabTypeUpdate, db: Session = Depends(get_db)):
+    return update_prefab_type(db, prefab_type_id, prefab_type)
+
+
+@app.delete("/prefab_types/{prefab_type_id}", response_model=PrefabTypeResponse)
+def delete_prefab_type(prefab_type_id: int, db: Session = Depends(get_db)):
+    return delete_prefab_type(db, prefab_type_id)
+
+
+@app.post("/prefabs/", response_model=PrefabResponse, status_code=201)
+def create_prefab(prefab: PrefabCreate, db: Session = Depends(get_db)):
+    return create_prefab(db, prefab)
+
+
+@app.get("/prefabs/{prefab_id}", response_model=PrefabResponse)
+def read_prefab(prefab_id: int, db: Session = Depends(get_db)):
+    db_prefab = get_prefab(db, prefab_id)
+    if not db_prefab:
+        raise HTTPException(status_code=404, detail="Prefab not found")
+    return db_prefab
+
+
+@app.put("/prefabs/{prefab_id}", response_model=PrefabResponse)
+def update_prefab(prefab_id: int, prefab: PrefabUpdate, db: Session = Depends(get_db)):
+    return update_prefab(db, prefab_id, prefab)
+
+
+@app.patch("/prefabs/{prefab_id}", response_model=PrefabResponse)
+def patch_prefab(prefab_id: int, prefab: PrefabUpdate, db: Session = Depends(get_db)):
+    db_prefab = get_prefab(db, prefab_id)
+    if not db_prefab:
+        raise HTTPException(status_code=404, detail="Prefab not found")
+    for key, value in prefab.dict(exclude_unset=True).items():
+        setattr(db_prefab, key, value)
+    db.commit()
+    db.refresh(db_prefab)
+    return db_prefab
+
+
+@app.delete("/prefabs/{prefab_id}", response_model=PrefabResponse)
+def delete_prefab(prefab_id: int, db: Session = Depends(get_db)):
+    return delete_prefab(db, prefab_id)
+
 
 # Запуск FastAPI
 if __name__ == "__main__":
