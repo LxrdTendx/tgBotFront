@@ -3321,43 +3321,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     elif data == 'issue_front':
 
+        await query.message.delete()
         # Удаление сообщения с основным меню
-        if 'main_menu_message_id' in context.user_data:
-            await context.bot.delete_message(
-                chat_id=query.message.chat.id,
-                message_id=context.user_data['main_menu_message_id']
-            )
+        # if 'main_menu_message_id' in context.user_data:
+        #     await context.bot.delete_message(
+        #         chat_id=query.message.chat.id,
+        #         message_id=context.user_data['main_menu_message_id']
+        #     )
 
-            # Получаем данные пользователя
-            response_user = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
-            if response_user.status_code == 200:
-                user_data = response_user.json()
-                user_object_id = user_data.get('object_id')
+        # Получаем данные пользователя
+        response_user = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+        if response_user.status_code == 200:
+            user_data = response_user.json()
+            user_object_id = user_data.get('object_id')
 
-                # Получаем объекты
-                response_objects = requests.get(f'{DJANGO_API_URL}objects/')
-                if response_objects.status_code == 200:
-                    objects = response_objects.json()
+            # Получаем объекты
+            response_objects = requests.get(f'{DJANGO_API_URL}objects/')
+            if response_objects.status_code == 200:
+                objects = response_objects.json()
 
-                    # Фильтруем объекты по user_object_ids
-                    filtered_objects = [obj for obj in objects if obj['id'] == user_object_id]
-                    print(objects)
-                    if filtered_objects:
-                        keyboard = [
-                            [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in filtered_objects
-                        ]
-                        keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
-                        context.user_data['stage'] = 'issue_choose_object'
-                    else:
-                        await query.message.reply_text('Нет доступных объектов для данного пользователя.')
-
+                # Фильтруем объекты по user_object_ids
+                filtered_objects = [obj for obj in objects if obj['id'] == user_object_id]
+                print(objects)
+                if filtered_objects:
+                    keyboard = [
+                        [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in filtered_objects
+                    ]
+                    keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
+                    context.user_data['stage'] = 'issue_choose_object'
                 else:
-                    await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+                    await query.message.reply_text('Нет доступных объектов для данного пользователя.')
 
             else:
-                await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
+                await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
+        else:
+            await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
 
 
     elif data.startswith('issue_obj_'):
