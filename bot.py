@@ -96,7 +96,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     password = context.args[0] if context.args else None
 
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
-    # logger.info(f"Ответ от API при проверке пользователя: {response.status_code}, {response.text}")
     if response.status_code == 404:
         if str(password).lower() == 'secret_password':
             context.user_data['is_authorized'] = True
@@ -107,7 +106,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             context.user_data['is_authorized'] = True
             context.user_data['organization_id'] = 3  # Устанавливаем организацию Босу
             await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
-            context.user_data['stage'] = 'get_full_name'
+            context.user_data['stage'] = 'get_full_name_boss'
 
         else:
             await update.message.reply_text('Пожалуйста, введите пароль для авторизации командой /start [пароль]:')
@@ -128,10 +127,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             elif str(password).lower() == 'secret_password_boss_12345':
                 user_data['is_authorized'] = True
-                user_data['organization_id'] = 3  # Устанавливаем организацию БОСу
+                user_data['organization_id'] = 3  # Устанавливаем организацию Босу
                 requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
-                context.user_data['stage'] = 'get_full_name'
+                context.user_data['stage'] = 'get_full_name_boss'
 
             else:
                 await update.message.reply_text('Пожалуйста, введите пароль для авторизации:')
@@ -155,41 +154,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             'is_authorized': context.user_data.get('is_authorized', False),
             'organization_id': organization_id,  # Передаем organization как None
         }
-        logger.info(f"Отправка данных в API для создания пользователя: {json.dumps(user_data, indent=2)}")
         response = requests.post(f'{DJANGO_API_URL}users/', json=user_data)
-        logger.info(f"Ответ от API при создании пользователя: {response.status_code}, {response.text}")
         if response.status_code == 201:
-            if organization_id:
-                # Запрос объектов для выбора
-                response = requests.get(f'{DJANGO_API_URL}objects/')
-                if response.status_code == 200:
-                    objects = response.json()
-                    # Создание кнопок в колонку
-                    keyboard = [
-                        [InlineKeyboardButton(obj['name'], callback_data=f'object_{obj["id"]}')] for obj in objects
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await update.message.reply_text('Выберите ваш объект:', reply_markup=reply_markup)
-                    context.user_data['stage'] = 'choose_object'
-                else:
-                    await update.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
-
+            response = requests.get(f'{DJANGO_API_URL}organizations/')
+            if response.status_code == 200:
+                organizations = response.json()
+                filtered_organizations = [org for org in organizations if org['id'] != 3]
+                keyboard = [
+                    [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in filtered_organizations
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
+                context.user_data['stage'] = 'choose_organization'
             else:
-                response = requests.get(f'{DJANGO_API_URL}organizations/')
-                if response.status_code == 200:
-                    organizations = response.json()
-                    # Исключаем организацию с id = 3
-                    filtered_organizations = [org for org in organizations if org['id'] != 3]
-                    # Создание кнопок в колонку
-                    keyboard = [
-                        [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in
-                        filtered_organizations
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
-                    context.user_data['stage'] = 'choose_organization'
-                else:
-                    await update.message.reply_text('Ошибка при получении списка организаций. Попробуйте снова.')
+                await update.message.reply_text('Ошибка при получении списка организаций. Попробуйте снова.')
+        else:
+            await update.message.reply_text('Ошибка при создании пользователя. Попробуйте снова.')
+
+    elif stage == 'get_full_name_boss':
+        full_name = text
+        context.user_data['full_name'] = full_name
+        organization_id = context.user_data.get('organization_id')
+
+        # Создаем пользователя в базе данных
+        user_data = {
+            'chat_id': user_id,
+            'full_name': full_name,
+            'is_authorized': context.user_data.get('is_authorized', False),
+            'organization_id': organization_id,  # Передаем organization_id для босса
+        }
+        response = requests.post(f'{DJANGO_API_URL}users/', json=user_data)
+        if response.status_code == 201:
+            response = requests.get(f'{DJANGO_API_URL}objects/')
+            if response.status_code == 200:
+                objects = response.json()
+                keyboard = [
+                    [InlineKeyboardButton(obj['name'], callback_data=f'object_{obj["id"]}')] for obj in objects
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text('Выберите ваш объект:', reply_markup=reply_markup)
+                context.user_data['stage'] = 'choose_object'
+            else:
+                await update.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
         else:
             await update.message.reply_text('Ошибка при создании пользователя. Попробуйте снова.')
 
@@ -217,19 +223,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if response.status_code == 200:
                 user_data = response.json()
                 user_data['is_authorized'] = True
-                user_data['organization_id'] = 3  # Устанавливаем организацию с ID = 2
+                user_data['organization_id'] = 3  # Устанавливаем организацию Босу
                 response = requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
                 if response.status_code == 200:
                     await update.message.reply_text(f'Вы успешно авторизованы, {user_data["full_name"]}!')
                     await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
-                    context.user_data['stage'] = 'get_full_name'
+                    context.user_data['stage'] = 'get_full_name_boss'
                 else:
                     await update.message.reply_text('Ошибка при обновлении данных. Попробуйте снова.')
             else:
                 context.user_data['is_authorized'] = True
-                context.user_data['organization_id'] = 3  # Устанавливаем организацию с ID = 2
+                context.user_data['organization_id'] = 3  # Устанавливаем организацию Босу
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
-                context.user_data['stage'] = 'get_full_name'
+                context.user_data['stage'] = 'get_full_name_boss'
 
         else:
             await update.message.reply_text('Неверный пароль, попробуйте еще раз:')
@@ -2661,9 +2667,12 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
 
     elif context.user_data.get('expecting_volume_count'):
         await handle_volume_count(update, context)
+
     elif context.user_data.get('expecting_new_volume_count'):
         await handle_new_volume_count(update, context)
 
+    elif context.user_data.get('expecting_prefab_quantity'):
+        await handle_prefab_quantity(update, context)
     else:
         await handle_message(update, context)
 
@@ -3076,6 +3085,143 @@ async def view_specific_day_volume(query: Update, context: ContextTypes.DEFAULT_
     full_name = user_data.get('full_name', 'Пользователь')
     organization_id = user_data.get('organization_id', None)
     await send_main_menu(query.message.chat.id, context, full_name, organization_id)
+
+async def send_prefab_types(chat_id, context: ContextTypes.DEFAULT_TYPE):
+    response = requests.get(f'{DJANGO_API_URL}prefab_types/')
+    if response.status_code == 200:
+        prefab_types = response.json()
+        keyboard = [
+            [InlineKeyboardButton(prefab_type['name'], callback_data=f"prefab_type_{prefab_type['id']}")]
+            for prefab_type in prefab_types
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Выберите тип префаба:",
+            reply_markup=reply_markup
+        )
+
+async def send_prefab_subtypes(chat_id, context: ContextTypes.DEFAULT_TYPE, prefab_type_id: int):
+    response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/?prefab_type_id={prefab_type_id}')
+    if response.status_code == 200:
+        prefab_subtypes = response.json()
+        keyboard = [
+            [InlineKeyboardButton(prefab_subtype['name'], callback_data=f"prefab_subtype_{prefab_subtype['id']}")]
+            for prefab_subtype in prefab_subtypes
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Выберите подтип префаба:",
+            reply_markup=reply_markup
+        )
+
+
+async def send_prefabs(chat_id, context: ContextTypes.DEFAULT_TYPE, prefab_subtype_id: int):
+    # Получаем данные пользователя
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{chat_id}/')
+    if user_response.status_code != 200:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Ошибка при получении данных пользователя. Попробуйте снова."
+        )
+        return
+
+    user_data = user_response.json()
+    organization_id = user_data.get('organization_id')
+
+    if not organization_id:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Ваша организация не определена. Пожалуйста, свяжитесь с администратором."
+        )
+        return
+
+    # Получаем все префабы
+    response = requests.get(f'{DJANGO_API_URL}prefabs/')
+    if response.status_code == 200:
+        prefabs = response.json()
+        prefabs = [prefab for prefab in prefabs if prefab['organization_id'] == organization_id]
+
+        if prefabs:
+            keyboard = []
+            for prefab in prefabs:
+                prefab_type_id = prefab['prefab_type_id']
+                prefab_subtype_id = prefab['prefab_subtype_id']
+                quantity = prefab.get('quantity', 0)
+
+                # Получаем имя prefab_type
+                type_response = requests.get(f'{DJANGO_API_URL}prefab_types/{prefab_type_id}')
+                if type_response.status_code == 200:
+                    prefab_type_name = type_response.json().get('name', 'Неизвестный тип')
+                else:
+                    prefab_type_name = 'Неизвестный тип'
+
+                # Получаем имя prefab_subtype
+                subtype_response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab_subtype_id}')
+                if subtype_response.status_code == 200:
+                    prefab_subtype_name = subtype_response.json().get('name', 'Неизвестный подтип')
+                else:
+                    prefab_subtype_name = 'Неизвестный подтип'
+
+                button_text = f"{quantity} - {prefab_type_name} - {prefab_subtype_name}"
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"prefab_{prefab['id']}")])
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Выберите префаб:",
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Нет доступных префабов выбранного типа или они уже в работе."
+            )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Ошибка при получении префабов. Попробуйте снова."
+        )
+
+async def handle_prefab_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('expecting_prefab_quantity'):
+        try:
+            quantity = int(update.message.text)
+            prefab_id = context.user_data['selected_prefab_id']
+
+            prefab_response = requests.get(f'{DJANGO_API_URL}prefabs/{prefab_id}')
+            if prefab_response.status_code != 200:
+                await update.message.reply_text('Ошибка при получении данных префаба. Попробуйте снова.')
+                return
+
+            prefab_data = prefab_response.json()
+            available_quantity = prefab_data.get('quantity', 0)
+
+            if quantity > available_quantity:
+                await update.message.reply_text(
+                    f"Введенное количество превышает доступное ({available_quantity}). Попробуйте снова."
+                )
+                return
+
+            prefabs_in_work_data = {
+                'prefab_id': prefab_id,
+                'quantity': quantity,
+                'status': "in_production"
+            }
+            response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=prefabs_in_work_data)
+            if response.status_code == 201:
+                await update.message.reply_text(
+                    f"Запись успешно создана: {quantity}"
+                )
+            else:
+                await update.message.reply_text('Ошибка при создании записи. Попробуйте снова.')
+
+        except ValueError:
+            await update.message.reply_text('Пожалуйста, введите корректное число.')
+
+        context.user_data['expecting_prefab_quantity'] = False
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -4223,6 +4369,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
 
+    elif query.data == "fact_production":
+        await send_prefab_types(query.message.chat_id, context)
+    elif query.data.startswith("prefab_type_"):
+        prefab_type_id = int(query.data.split("_")[2])
+        context.user_data['selected_prefab_type_id'] = prefab_type_id
+        await send_prefab_subtypes(query.message.chat_id, context, prefab_type_id)
+    elif query.data.startswith("prefab_subtype_"):
+        prefab_subtype_id = int(query.data.split("_")[2])
+        context.user_data['selected_prefab_subtype_id'] = prefab_subtype_id
+        await send_prefabs(query.message.chat_id, context, prefab_subtype_id)
+    elif query.data.startswith("prefab_"):
+        prefab_id = int(query.data.split("_")[1])
+        context.user_data['selected_prefab_id'] = prefab_id
+        context.user_data['expecting_prefab_quantity'] = True
+        await query.message.reply_text("Введите количество:")
 
 def main() -> None:
     # Вставьте свой токен
