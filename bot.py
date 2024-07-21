@@ -555,7 +555,7 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
             [InlineKeyboardButton("\U0001F4C4 Фронт работ", callback_data='frontbutton')],
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
             [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')],
-            [InlineKeyboardButton("🔄 Сменить объект", callback_data='change_object')]
+            [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')]
         ]
         text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Вы привязаны к объекту "{object_name}". Выберите действие:'
     elif is_factory:
