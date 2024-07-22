@@ -680,7 +680,8 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
             [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')],
             [InlineKeyboardButton("Префабы", callback_data='prefabsoptionlist')],
-            [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')]
+            [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')],
+            [InlineKeyboardButton("📞 Тех. поддержка", callback_data='support')]
         ]
         text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Вы привязаны к объекту "{object_name}". Выберите действие:'
     elif is_factory:
@@ -696,6 +697,7 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
             [InlineKeyboardButton("\U0001F4C4 Фронт", callback_data='front_menu')],
             [InlineKeyboardButton("\U0001F477 Численность", callback_data='workforce_menu')],
             [InlineKeyboardButton("📐 Объем", callback_data='volume_menu')],
+            [InlineKeyboardButton("📞 Тех. поддержка", callback_data='support')]
         ]
         text = f'Здравствуйте, {full_name} из организации "{organization_name}"! Выберите действие:'
 
@@ -6233,7 +6235,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     # Вставьте свой токен
-    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
+    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
 
     application.add_handler(CommandHandler("info", welcome_message))
     application.add_handler(CommandHandler("choice", choose_organization))
