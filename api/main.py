@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Union
 from datetime import datetime
 import shutil
@@ -173,7 +173,6 @@ class Prefab(Base):
     object_id = Column(Integer, ForeignKey("objects.id"), nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     comment = Column(String, nullable=True)
-    status = Column(String, nullable=True)
 
     prefab_type = relationship("PrefabType")
     prefab_subtype = relationship("PrefabSubtype")
@@ -188,6 +187,36 @@ class PrefabSubtype(Base):
     prefabtype_id = Column(Integer, ForeignKey("prefab_types.id"), nullable=False)
 
     prefab_type = relationship("PrefabType")
+
+class PrefabsInWork(Base):
+    __tablename__ = "prefabs_in_work"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prefab_id = Column(Integer, ForeignKey("prefabs.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    status = Column(String)
+    production_date = Column(DateTime, nullable=True)  # Дата производства
+    sgp_date = Column(DateTime, nullable=True)         # Дата СГП
+    shipping_date = Column(DateTime, nullable=True)    # Дата отгрузки
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)  # Добавлено поле warehouse_id
+    photos = Column(JSON, nullable=True, default=list)  # Добавлено поле photos
+    comments = Column(String, nullable=True)  # Поле для комментариев
+    block_section_id = Column(Integer, ForeignKey("blocksections.id"), nullable=True)  # Добавлено поле block_section_id
+    floor = Column(String, nullable=True)  # Добавлено поле floor
+
+    prefab = relationship("Prefab")
+    warehouse = relationship("Warehouse", back_populates="prefabs_in_work")
+    block_section = relationship("BlockSection")
+
+
+
+class Warehouse(Base):
+    __tablename__ = "warehouses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+
+    prefabs_in_work = relationship("PrefabsInWork", back_populates="warehouse")
 
 # Pydantic models
 class OrganizationBase(BaseModel):
@@ -424,7 +453,6 @@ class PrefabBase(BaseModel):
     object_id: Optional[int] = None
     organization_id: Optional[int] = None
     comment: Optional[str] = None
-    status: Optional[str] = None
 
 
 class PrefabCreate(PrefabBase):
@@ -460,6 +488,67 @@ class PrefabSubtypeResponse(PrefabSubtypeBase):
 
     class Config:
         from_attributes = True
+
+
+class PrefabsInWorkBase(BaseModel):
+    prefab_id: int
+    quantity: int
+    status: str
+    production_date: Optional[datetime] = None  # Дата производства
+    sgp_date: Optional[datetime] = None         # Дата СГП
+    shipping_date: Optional[datetime] = None    # Дата отгрузки
+    warehouse_id: Optional[int] = None  # Добавлено поле warehouse_id
+    photos: Optional[List[str]] = Field(default_factory=list)  # Добавлено поле photos
+    comments: Optional[str] = None
+    block_section_id: Optional[int] = None
+    floor: Optional[str] = None
+
+class PrefabsInWorkCreate(PrefabsInWorkBase):
+    pass
+
+class PrefabsInWorkUpdate(BaseModel):
+    quantity: Optional[int] = None  # Добавлено поле quantity
+    status: Optional[str] = None
+    production_date: Optional[datetime] = None  # Дата производства
+    sgp_date: Optional[datetime] = None         # Дата СГП
+    shipping_date: Optional[datetime] = None    # Дата отгрузки
+    warehouse_id: Optional[int] = None  # Добавлено поле warehouse_id
+    photos: Optional[List[str]] = Field(default_factory=list)  # Добавлено поле photos
+    comments: Optional[str] = None
+    block_section_id: Optional[int] = None
+    floor: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class PrefabsInWorkResponse(PrefabsInWorkBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+
+
+
+class WarehouseBase(BaseModel):
+    name: str
+
+
+class WarehouseCreate(WarehouseBase):
+    pass
+
+
+class WarehouseUpdate(WarehouseBase):
+    pass
+
+
+class WarehouseResponse(WarehouseBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 
 # FastAPI setup
 app = FastAPI()
@@ -607,6 +696,65 @@ def delete_prefab(db: Session, prefab_id: int):
     db.delete(db_prefab)
     db.commit()
     return db_prefab
+
+def get_prefabs_in_work(db: Session, prefabs_in_work_id: int):
+    return db.query(PrefabsInWork).filter(PrefabsInWork.id == prefabs_in_work_id).first()
+
+def create_prefabs_in_work(db: Session, prefabs_in_work: PrefabsInWorkCreate):
+    db_prefabs_in_work = PrefabsInWork(**prefabs_in_work.dict())
+    db.add(db_prefabs_in_work)
+    db.commit()
+    db.refresh(db_prefabs_in_work)
+    return db_prefabs_in_work
+
+def update_prefabs_in_work(db: Session, prefabs_in_work_id: int, prefabs_in_work: PrefabsInWorkUpdate):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+    for key, value in prefabs_in_work.dict().items():
+        setattr(db_prefabs_in_work, key, value)
+    db.commit()
+    db.refresh(db_prefabs_in_work)
+    return db_prefabs_in_work
+
+def delete_prefabs_in_work(db: Session, prefabs_in_work_id: int):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+    db.delete(db_prefabs_in_work)
+    db.commit()
+    return db_prefabs_in_work
+
+def get_warehouse(db: Session, warehouse_id: int):
+    return db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+
+
+def create_warehouse(db: Session, warehouse: WarehouseCreate):
+    db_warehouse = Warehouse(**warehouse.dict())
+    db.add(db_warehouse)
+    db.commit()
+    db.refresh(db_warehouse)
+    return db_warehouse
+
+
+def update_warehouse(db: Session, warehouse_id: int, warehouse: WarehouseUpdate):
+    db_warehouse = get_warehouse(db, warehouse_id)
+    if not db_warehouse:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    for key, value in warehouse.dict().items():
+        setattr(db_warehouse, key, value)
+    db.commit()
+    db.refresh(db_warehouse)
+    return db_warehouse
+
+
+def delete_warehouse(db: Session, warehouse_id: int):
+    db_warehouse = get_warehouse(db, warehouse_id)
+    if not db_warehouse:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    db.delete(db_warehouse)
+    db.commit()
+    return db_warehouse
 
 
 # Routes
@@ -960,6 +1108,11 @@ def delete_volume(volume_id: int, db: Session = Depends(get_db)):
 def create_prefab_type(prefab_type: PrefabTypeCreate, db: Session = Depends(get_db)):
     return create_prefab_type(db, prefab_type)
 
+@app.get("/prefab_types/", response_model=List[PrefabTypeResponse])
+def read_prefab_types(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    prefab_types = db.query(PrefabType).offset(skip).limit(limit).all()
+    return prefab_types
+
 
 @app.get("/prefab_types/{prefab_type_id}", response_model=PrefabTypeResponse)
 def read_prefab_type(prefab_type_id: int, db: Session = Depends(get_db)):
@@ -1012,6 +1165,142 @@ def patch_prefab(prefab_id: int, prefab: PrefabUpdate, db: Session = Depends(get
 @app.delete("/prefabs/{prefab_id}", response_model=PrefabResponse)
 def delete_prefab(prefab_id: int, db: Session = Depends(get_db)):
     return delete_prefab(db, prefab_id)
+
+
+@app.post("/prefabs_in_work/", response_model=PrefabsInWorkResponse, status_code=201)
+def create_prefabs_in_work_endpoint(prefabs_in_work: PrefabsInWorkCreate, db: Session = Depends(get_db)):
+    return create_prefabs_in_work(db, prefabs_in_work)
+
+@app.get("/prefabs_in_work/", response_model=List[PrefabsInWorkResponse])
+def read_prefabs_in_work(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    prefabs_in_work = db.query(PrefabsInWork).offset(skip).limit(limit).all()
+    return prefabs_in_work
+@app.get("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
+def read_prefabs_in_work(prefabs_in_work_id: int, db: Session = Depends(get_db)):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+    return db_prefabs_in_work
+
+@app.put("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
+def update_prefabs_in_work_endpoint(prefabs_in_work_id: int, prefabs_in_work: PrefabsInWorkUpdate, db: Session = Depends(get_db)):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+
+    for key, value in prefabs_in_work.dict(exclude_unset=True).items():
+        if key != 'prefab_id':  # Исключаем обновление prefab_id
+            setattr(db_prefabs_in_work, key, value)
+
+    db.commit()
+    db.refresh(db_prefabs_in_work)
+    return db_prefabs_in_work
+
+
+@app.patch("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
+def patch_prefabs_in_work_endpoint(prefabs_in_work_id: int, prefabs_in_work: PrefabsInWorkUpdate, db: Session = Depends(get_db)):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+
+    try:
+        update_data = prefabs_in_work.dict(exclude_unset=True)
+        print(f"Updating PrefabsInWork ID: {prefabs_in_work_id} with data: {update_data}")  # Логирование данных
+
+        for key, value in update_data.items():
+            setattr(db_prefabs_in_work, key, value)
+
+        db.commit()
+        db.refresh(db_prefabs_in_work)
+        return db_prefabs_in_work
+
+    except ValidationError as e:
+        print(f"Validation error: {e.json()}")
+        raise HTTPException(status_code=422, detail=e.errors())
+
+
+
+@app.delete("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
+def delete_prefabs_in_work_endpoint(prefabs_in_work_id: int, db: Session = Depends(get_db)):
+    return delete_prefabs_in_work(db, prefabs_in_work_id)
+
+
+@app.put("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
+def update_prefabs_in_work_endpoint(prefabs_in_work_id: int, prefabs_in_work: PrefabsInWorkUpdate,
+                                    db: Session = Depends(get_db)):
+    db_prefabs_in_work = get_prefabs_in_work(db, prefabs_in_work_id)
+    if not db_prefabs_in_work:
+        raise HTTPException(status_code=404, detail="PrefabsInWork not found")
+
+    for key, value in prefabs_in_work.dict().items():
+        setattr(db_prefabs_in_work, key, value)
+
+    db.commit()
+    db.refresh(db_prefabs_in_work)
+    return db_prefabs_in_work
+
+@app.get("/prefab_subtypes/", response_model=List[PrefabSubtypeResponse])
+def read_prefab_subtypes(prefab_type_id: Optional[int] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    query = db.query(PrefabSubtype)
+    if prefab_type_id:
+        query = query.filter(PrefabSubtype.prefabtype_id == prefab_type_id)
+    prefab_subtypes = query.offset(skip).limit(limit).all()
+    return prefab_subtypes
+
+
+@app.get("/prefab_subtypes/{prefab_subtype_id}", response_model=PrefabSubtypeResponse)
+def read_prefab_subtype(prefab_subtype_id: int, db: Session = Depends(get_db)):
+    db_prefab_subtype = db.query(PrefabSubtype).filter(PrefabSubtype.id == prefab_subtype_id).first()
+    if not db_prefab_subtype:
+        raise HTTPException(status_code=404, detail="PrefabSubtype not found")
+    return db_prefab_subtype
+
+@app.get("/prefabs/", response_model=List[PrefabResponse])
+def read_prefabs(prefab_type_id: Optional[int] = None, prefab_subtype_id: Optional[int] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    query = db.query(Prefab)
+    if prefab_type_id:
+        query = query.filter(Prefab.prefab_type_id == prefab_type_id)
+    if prefab_subtype_id:
+        query = query.filter(Prefab.prefab_subtype_id == prefab_subtype_id)
+    prefabs = query.offset(skip).limit(limit).all()
+    return prefabs
+
+
+@app.get("/prefabs/{prefab_id}", response_model=PrefabResponse)
+def read_prefab(prefab_id: int, db: Session = Depends(get_db)):
+    db_prefab = db.query(Prefab).filter(Prefab.id == prefab_id).first()
+    if not db_prefab:
+        raise HTTPException(status_code=404, detail="Prefab not found")
+    return db_prefab
+
+
+@app.post("/warehouses/", response_model=WarehouseResponse, status_code=201)
+def create_warehouse_endpoint(warehouse: WarehouseCreate, db: Session = Depends(get_db)):
+    return create_warehouse(db, warehouse)
+
+
+@app.get("/warehouses/", response_model=List[WarehouseResponse])
+def read_warehouses(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    warehouses = db.query(Warehouse).offset(skip).limit(limit).all()
+    return warehouses
+
+
+@app.get("/warehouses/{warehouse_id}", response_model=WarehouseResponse)
+def read_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
+    db_warehouse = get_warehouse(db, warehouse_id)
+    if not db_warehouse:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    return db_warehouse
+
+
+@app.put("/warehouses/{warehouse_id}", response_model=WarehouseResponse)
+def update_warehouse_endpoint(warehouse_id: int, warehouse: WarehouseUpdate, db: Session = Depends(get_db)):
+    return update_warehouse(db, warehouse_id, warehouse)
+
+
+@app.delete("/warehouses/{warehouse_id}", response_model=WarehouseResponse)
+def delete_warehouse_endpoint(warehouse_id: int, db: Session = Depends(get_db)):
+    return delete_warehouse(db, warehouse_id)
 
 
 # Запуск FastAPI
