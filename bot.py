@@ -22,6 +22,7 @@ import platform
 from docx import Document
 from docx.shared import Pt
 from datetime import datetime
+from collections import defaultdict
 
 # Включаем логирование
 logging.basicConfig(
@@ -96,6 +97,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     password = context.args[0] if context.args else None
 
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+
+
     if response.status_code == 404:
         if str(password).lower() == 'secret_password':
             context.user_data['is_authorized'] = True
@@ -108,13 +111,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
             context.user_data['stage'] = 'get_full_name_boss'
 
+        # elif str(password).lower() == 'test_front_section':
+        #     await update.message.reply_text('Привет, не авторизованный бобр')
+        #     context.user_data['stage'] = 'test_front_section'
+
+        elif str(password).startswith('baseinfo_'):
+            context.user_data['params'] = password.split('_')[1:]  # Сохраняем параметры для дальнейшего использования
+            await handle_baseinfo(update, context)
+
         else:
             await update.message.reply_text('Пожалуйста, введите пароль для авторизации командой /start [пароль]:')
             context.user_data['stage'] = 'get_password'
     else:
         user_data = response.json()
         if user_data['is_authorized']:
-            if user_data['organization_id']:
+            if str(password).startswith('baseinfo_'):
+                context.user_data['params'] = password.split('_')[1:]  # Сохраняем параметры для дальнейшего использования
+                await handle_baseinfo(update, context)
+
+            elif user_data['organization_id']:
                 await send_main_menu(update.message.chat.id, context, user_data['full_name'], user_data['organization_id'])
             else:
                 await update.message.reply_text('Пожалуйста, выберите организацию командой /choice.')
@@ -132,9 +147,94 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
                 context.user_data['stage'] = 'get_full_name_boss'
 
+
             else:
                 await update.message.reply_text('Пожалуйста, введите пароль для авторизации:')
                 context.user_data['stage'] = 'get_password'
+
+
+
+async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    def get_organization_by_id(organization_id):
+        response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}')
+        if response.status_code == 200:
+            return response.json()
+        return {'organization': 'неизвестно'}
+
+    def get_work_type_by_id(work_type_id):
+        response = requests.get(f'{DJANGO_API_URL}worktypes/{work_type_id}')
+        if response.status_code == 200:
+            return response.json()
+        return {'name': 'неизвестно'}
+    try:
+        id_object, block_section_id, floor = context.user_data['params']
+        workforce_response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
+        volume_response = requests.get(f'{DJANGO_API_URL}volumes/')
+
+        if workforce_response.status_code == 200 and volume_response.status_code == 200:
+            workforces = workforce_response.json()
+            volumes = volume_response.json()
+
+            filtered_workforces = [
+                wf for wf in workforces if wf['object_id'] == int(id_object) and
+                wf['block_section_id'] == int(block_section_id) and
+                wf['floor'] == floor
+            ]
+
+            filtered_volumes = [
+                vol for vol in volumes if vol['object_id'] == int(id_object) and
+                vol['block_section_id'] == int(block_section_id) and
+                vol['floor'] == floor
+            ]
+
+            if filtered_workforces:
+                # Группируем данные по дате для workforces
+                grouped_workforces = defaultdict(list)
+                for wf in filtered_workforces:
+                    date = datetime.fromisoformat(wf['date']).date()
+                    grouped_workforces[date].append(wf)
+
+                # Сортируем даты по убыванию
+                sorted_workforce_dates = sorted(grouped_workforces.keys(), reverse=True)
+
+                message = "\U0001F477 *Численность:*\n"
+                for date in sorted_workforce_dates:
+                    message += f"Дата: {date.strftime('%d.%m.%Y')}\n"
+                    for wf in grouped_workforces[date]:
+                        organization = get_organization_by_id(wf['organization_id'])
+                        work_type = get_work_type_by_id(wf['work_type_id'])
+                        message += (f"{organization['organization']} - {work_type['name']} - {wf['workforce_count']} ч.\n")
+                    message += "\n"
+
+            if filtered_volumes:
+                # Группируем данные по дате для volumes
+                grouped_volumes = defaultdict(list)
+                for vol in filtered_volumes:
+                    date = datetime.fromisoformat(vol['date']).date()
+                    grouped_volumes[date].append(vol)
+
+                # Сортируем даты по убыванию
+                sorted_volume_dates = sorted(grouped_volumes.keys(), reverse=True)
+
+                message += "📐 *Объемы:*\n"
+                for date in sorted_volume_dates:
+                    message += f"Дата: {date.strftime('%d.%m.%Y')}\n"
+                    for vol in grouped_volumes[date]:
+                        organization = get_organization_by_id(vol['organization_id'])
+                        work_type = get_work_type_by_id(vol['work_type_id'])
+                        message += (f"{organization['organization']} - {work_type['name']} - {vol['volume']} м³\n")
+                    message += "\n"
+
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+
+        else:
+            await update.message.reply_text("Ошибка при получении данных о численности или объемах. Попробуйте позже.")
+
+    except Exception as e:
+        await update.message.reply_text(f"Произошла ошибка: {str(e)}")
+
+
+
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,6 +242,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text
 
     stage = context.user_data.get('stage')
+
+
+
     if stage == 'get_full_name':
         full_name = text
         context.user_data['full_name'] = full_name
@@ -199,6 +302,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             await update.message.reply_text('Ошибка при создании пользователя. Попробуйте снова.')
 
+
     elif stage == 'get_password':
         if text == 'secret_password':
             response = requests.get(f'{DJANGO_API_URL}users/{user_id}/')
@@ -236,6 +340,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 context.user_data['organization_id'] = 3  # Устанавливаем организацию Босу
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
                 context.user_data['stage'] = 'get_full_name_boss'
+
+        elif text == 'test_front_section':
+            await update.message.reply_text('привет из Get_password')
 
         else:
             await update.message.reply_text('Неверный пароль, попробуйте еще раз:')
@@ -2074,6 +2181,7 @@ async def send_workforce_to_google_sheets(object_name, block_section_name, floor
             "G": datetime.now().strftime("%d.%m.%Y"),
             "H": id_workforce,
         }
+        print("Отправляемый JSON:", data)
         async with session.post(WEBHOOK_URL, json=data) as response:
             response.raise_for_status()
             return await response.json()
@@ -4775,6 +4883,8 @@ async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text('Ошибка при получении данных пользователя.')
     else:
         await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
+
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
