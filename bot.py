@@ -153,7 +153,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data['stage'] = 'get_password'
 
 
-
 async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     def get_organization_by_id(organization_id):
         response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}')
@@ -166,26 +165,37 @@ async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if response.status_code == 200:
             return response.json()
         return {'name': 'неизвестно'}
+
     try:
         id_object, block_section_id, floor = context.user_data['params']
         workforce_response = requests.get(f'{DJANGO_API_URL}frontworkforces/')
         volume_response = requests.get(f'{DJANGO_API_URL}volumes/')
 
-        if workforce_response.status_code == 200 and volume_response.status_code == 200:
+        # Получаем информацию об объекте и секции
+        object_response = requests.get(f'{DJANGO_API_URL}objects/{id_object}/')
+        block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
+
+        if (workforce_response.status_code == 200 and volume_response.status_code == 200 and
+                object_response.status_code == 200 and block_section_response.status_code == 200):
+
             workforces = workforce_response.json()
             volumes = volume_response.json()
+            object_name = object_response.json().get('name', 'неизвестный объект')
+            block_section_name = block_section_response.json().get('name', 'неизвестная секция')
 
             filtered_workforces = [
                 wf for wf in workforces if wf['object_id'] == int(id_object) and
-                wf['block_section_id'] == int(block_section_id) and
-                wf['floor'] == floor
+                                           wf['block_section_id'] == int(block_section_id) and
+                                           wf['floor'] == floor
             ]
 
             filtered_volumes = [
                 vol for vol in volumes if vol['object_id'] == int(id_object) and
-                vol['block_section_id'] == int(block_section_id) and
-                vol['floor'] == floor
+                                          vol['block_section_id'] == int(block_section_id) and
+                                          vol['floor'] == floor
             ]
+
+            message = f"🏗️ *{object_name} - {block_section_name} - этаж {floor}*\n\n"
 
             if filtered_workforces:
                 # Группируем данные по дате для workforces
@@ -197,13 +207,14 @@ async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 # Сортируем даты по убыванию
                 sorted_workforce_dates = sorted(grouped_workforces.keys(), reverse=True)
 
-                message = "\U0001F477 *Численность:*\n"
+                message += "\U0001F477 *Численность:*\n"
                 for date in sorted_workforce_dates:
                     message += f"Дата: {date.strftime('%d.%m.%Y')}\n"
                     for wf in grouped_workforces[date]:
                         organization = get_organization_by_id(wf['organization_id'])
                         work_type = get_work_type_by_id(wf['work_type_id'])
-                        message += (f"{organization['organization']} - {work_type['name']} - {wf['workforce_count']} ч.\n")
+                        message += (
+                            f"{organization['organization']} - {work_type['name']} - {wf['workforce_count']} ч.\n")
                     message += "\n"
 
             if filtered_volumes:
@@ -225,14 +236,14 @@ async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         message += (f"{organization['organization']} - {work_type['name']} - {vol['volume']} м³\n")
                     message += "\n"
 
-            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN,)
 
         else:
-            await update.message.reply_text("Ошибка при получении данных о численности или объемах. Попробуйте позже.")
+            await update.message.reply_text(
+                "Ошибка при получении данных о численности, объемах, объекте или секции. Попробуйте позже.")
 
     except Exception as e:
         await update.message.reply_text(f"Произошла ошибка: {str(e)}")
-
 
 
 
