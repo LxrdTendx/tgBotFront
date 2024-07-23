@@ -1,3 +1,4 @@
+import pytz
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, text
@@ -217,6 +218,25 @@ class Warehouse(Base):
     name = Column(String, nullable=False, unique=True)
 
     prefabs_in_work = relationship("PrefabsInWork", back_populates="warehouse")
+
+
+
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
+def get_moscow_time():
+    return datetime.now(MOSCOW_TZ)
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    question = Column(String, nullable=False)
+    answer = Column(String, nullable=True)
+    respondent_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status = Column(String, default="open")
+    photo_ids = Column(JSON, default=list)
+
+    created_at = Column(DateTime(timezone=True), default=get_moscow_time)
 
 # Pydantic models
 class OrganizationBase(BaseModel):
@@ -550,6 +570,36 @@ class WarehouseResponse(WarehouseBase):
         from_attributes = True
 
 
+
+class SupportTicketBase(BaseModel):
+    sender_id: int
+    question: str
+    answer: Optional[str] = None
+    respondent_id: Optional[int] = None
+    status: Optional[str] = "open"
+    photo_ids: Optional[List[str]] = []
+
+
+class SupportTicketCreate(SupportTicketBase):
+    pass
+
+class SupportTicketUpdate(BaseModel):
+    answer: Optional[str] = None
+    respondent_id: Optional[int] = None
+    status: Optional[str] = None
+    photo_ids: Optional[List[str]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SupportTicketResponse(SupportTicketBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # FastAPI setup
 app = FastAPI()
 
@@ -755,6 +805,29 @@ def delete_warehouse(db: Session, warehouse_id: int):
     db.delete(db_warehouse)
     db.commit()
     return db_warehouse
+
+def get_support_ticket(db: Session, ticket_id: int):
+    return db.query(SupportTicket).filter(SupportTicket.id == ticket_id).first()
+
+def create_support_ticket(db: Session, ticket: SupportTicketCreate):
+    db_ticket = SupportTicket(**ticket.dict())
+    db.add(db_ticket)
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
+def update_support_ticket(db: Session, ticket_id: int, ticket: SupportTicketUpdate):
+    db_ticket = get_support_ticket(db, ticket_id)
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="SupportTicket not found")
+    for key, value in ticket.dict(exclude_unset=True).items():
+        setattr(db_ticket, key, value)
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
+def get_support_tickets_by_status(db: Session, status: str):
+    return db.query(SupportTicket).filter(SupportTicket.status == status).all()
 
 
 # Routes
@@ -1301,6 +1374,43 @@ def update_warehouse_endpoint(warehouse_id: int, warehouse: WarehouseUpdate, db:
 @app.delete("/warehouses/{warehouse_id}", response_model=WarehouseResponse)
 def delete_warehouse_endpoint(warehouse_id: int, db: Session = Depends(get_db)):
     return delete_warehouse(db, warehouse_id)
+
+@app.post("/support_tickets/", response_model=SupportTicketResponse, status_code=201)
+def create_support_ticket_endpoint(ticket: SupportTicketCreate, db: Session = Depends(get_db)):
+    return create_support_ticket(db, ticket)
+
+@app.get("/support_tickets/", response_model=List[SupportTicketResponse])
+def read_support_tickets(status: Optional[str] = None, db: Session = Depends(get_db)):
+    if status:
+        return get_support_tickets_by_status(db, status)
+    return db.query(SupportTicket).all()
+
+@app.get("/support_tickets/{ticket_id}", response_model=SupportTicketResponse)
+def read_support_ticket(ticket_id: int, db: Session = Depends(get_db)):
+    db_ticket = get_support_ticket(db, ticket_id)
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="SupportTicket not found")
+    return db_ticket
+
+@app.put("/support_tickets/{ticket_id}", response_model=SupportTicketResponse)
+def update_support_ticket_endpoint(ticket_id: int, ticket: SupportTicketUpdate, db: Session = Depends(get_db)):
+    return update_support_ticket(db, ticket_id, ticket)
+
+
+@app.patch("/support_tickets/{ticket_id}", response_model=SupportTicketResponse)
+def update_support_ticket(ticket_id: int, ticket: SupportTicketUpdate, db: Session = Depends(get_db)):
+    db_ticket = get_support_ticket(db, ticket_id)
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="SupportTicket not found")
+
+    update_data = ticket.dict(exclude_unset=True)
+
+    for key, value in update_data.items():
+        setattr(db_ticket, key, value)
+
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
 
 
 # Запуск FastAPI

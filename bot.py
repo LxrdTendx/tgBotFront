@@ -153,6 +153,53 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data['stage'] = 'get_password'
 
 
+async def handle_tech_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+
+    # Получаем список открытых запросов техподдержки
+    response = requests.get(f'{DJANGO_API_URL}support_tickets/?status=open')
+    if response.status_code != 200:
+        await update.message.reply_text('Ошибка при получении списка запросов техподдержки. Попробуйте снова позже.')
+        return
+
+    support_tickets = response.json()
+    if not support_tickets:
+        await update.message.reply_text('Нет открытых запросов техподдержки.')
+        return
+
+    keyboard = []
+
+    for ticket in support_tickets:
+        # Получаем информацию о пользователе
+        user_response = requests.get(f'{DJANGO_API_URL}users/{ticket["sender_id"]}/')
+        if user_response.status_code != 200:
+            continue
+        user_data = user_response.json()
+
+        # Получаем информацию об организации
+        org_response = requests.get(f'{DJANGO_API_URL}organizations/{user_data["organization_id"]}/')
+        if org_response.status_code != 200:
+            continue
+        organization_name = org_response.json().get('organization', 'Неизвестная организация')
+
+        # Форматируем ФИО
+        full_name = user_data['full_name']
+        if full_name:
+            parts = full_name.split()
+            formatted_name = f"{parts[0]} {parts[1][0]}. {parts[2][0]}." if len(parts) > 2 else full_name
+        else:
+            formatted_name = "Неизвестный пользователь"
+
+        # Форматируем дату
+        created_at = ticket['created_at'].split('T')[0]
+
+        button_text = f"{organization_name}, {formatted_name} - {created_at}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f'ticket_{ticket["id"]}')])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Выберите запрос:', reply_markup=reply_markup)
+
 async def handle_baseinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     def get_organization_by_id(organization_id):
         response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}')
@@ -1109,6 +1156,41 @@ async def handle_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif context.user_data.get('stage') == 'attach_photos_prefab_in_montage':
         await handle_prefab_photo_upload(update, context)
 
+    elif context.user_data.get('stage') == 'attach_photos_support_ticket':
+        ticket_id = context.user_data.get('ticket_id')
+        if ticket_id is None:
+            await update.message.reply_text('Ошибка: идентификатор заявки тех. поддержки не найден. Попробуйте снова.')
+            return
+
+        photos = context.user_data.get('photos', [])
+        file_id = update.message.photo[-1].file_id
+        photos.append(file_id)
+        context.user_data['photos'] = photos
+
+        if 'last_photo_message_id' in context.user_data:
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.message.chat.id,
+                    message_id=context.user_data['last_photo_message_id']
+                )
+            except telegram.error.BadRequest as e:
+                if str(e) != "Message to delete not found":
+                    raise
+
+        if len(photos) < 10:
+            reply_keyboard = [
+                [KeyboardButton("/done")]
+            ]
+            reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+            message = await update.message.reply_text(
+                f'Фотография {len(photos)} из 10 успешно загружена. Прикрепите ещё или нажмите /done для завершения.',
+                reply_markup=reply_markup
+            )
+            context.user_data['last_photo_message_id'] = message.message_id
+        else:
+            await finalize_photo_upload_support_ticket(update, context)
+
 async def finalize_photo_upload_prefab_in_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prefab_in_work_id = context.user_data.get('prefab_in_work_id')
     photos = context.user_data.get('photos', [])
@@ -1133,7 +1215,8 @@ async def handle_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await finalize_photo_upload_prefab_in_work(update, context)
     elif context.user_data.get('stage') == 'attach_photos_prefab_in_montage':
         await finalize_photo_montage(update, context)
-
+    elif stage == 'attach_photos_support_ticket':
+        await finalize_photo_upload_support_ticket(update, context)
 
 async def finalize_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     transfer_id = context.user_data.get('transfer_id')
@@ -1195,7 +1278,36 @@ async def finalize_photo_upload(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text('Ошибка при получении данных фронта. Попробуйте снова.')
 
+async def finalize_photo_upload_support_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ticket_id = context.user_data.get('ticket_id')
+    photo_ids = context.user_data.get('photos', [])
 
+    # Отправка фотографий на сервер
+    update_data = {
+        'photo_ids': photo_ids
+    }
+    response = requests.patch(f'{DJANGO_API_URL}support_tickets/{ticket_id}', json=update_data)
+    if response.status_code == 200:
+        await update.message.reply_text("\U00002705 Ваш вопрос отправлен в тех. поддержку. Ожидайте ответа.", reply_markup=reply_markup_kb_main)
+
+        # Получаем данные пользователя
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat.id}/')
+        if user_response.status_code == 200:
+            user_data = user_response.json()
+            full_name = user_data.get('full_name', 'Пользователь')
+            organization_id = user_data.get('organization_id')
+
+            # Вызываем send_main_menu
+            await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+        else:
+            await update.message.reply_text('Ошибка при получении данных пользователя. Пожалуйста, попробуйте снова.')
+
+        context.user_data['stage'] = None
+        context.user_data['photos'] = []
+        context.user_data['ticket_id'] = None
+    else:
+        logger.error(f"Error creating support ticket: {response.status_code} {response.text}")
+        await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
 
 async def view_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.message.delete()
@@ -2865,6 +2977,12 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
 
     elif context.user_data.get('expecting_montage_quantity'):
         await handle_montage_quantity(update, context)
+
+    elif context.user_data.get('stage') == 'support_question':
+        await handle_support_question(update, context)
+
+    elif context.user_data.get('stage') == 'support_answer':
+        await handle_support_answer(update, context)
 
     else:
         await handle_message(update, context)
@@ -4898,6 +5016,147 @@ async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
 
 
+async def handle_support_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        question = update.message.text
+
+        ticket_data = {
+            "sender_id": user_data['id'],
+            "question": question,
+        }
+        logger.info(f"Sending support ticket data: {ticket_data}")
+        response = requests.post(f'{DJANGO_API_URL}support_tickets/', json=ticket_data)
+        if response.status_code == 201:
+            context.user_data['ticket_id'] = response.json()['id']
+            context.user_data['stage'] = 'attach_photos_support_ticket'
+            reply_keyboard = [
+                [KeyboardButton("/done")]
+            ]
+            reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            await update.message.reply_text(
+                "Ваш вопрос отправлен в тех. поддержку. Прикрепите фотографии (если нужно) или нажмите /done для завершения.",
+                reply_markup=reply_markup
+            )
+        else:
+            logger.error(f"Error creating support ticket: {response.status_code} {response.text}")
+            await update.message.reply_text("Ошибка при отправке вопроса. Попробуйте снова.")
+    else:
+        logger.error(f"Error fetching user data: {user_response.status_code} {user_response.text}")
+        await update.message.reply_text("Ошибка при получении данных пользователя. Попробуйте снова.")
+
+
+async def handle_ticket_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket_id: int) -> None:
+    query = update.callback_query
+    response = requests.get(f'{DJANGO_API_URL}support_tickets/{ticket_id}/')
+    if response.status_code != 200:
+        await query.message.reply_text('Ошибка при получении данных запроса.')
+        return
+
+    ticket_data = response.json()
+    sender_id = ticket_data["sender_id"]
+
+    user_response = requests.get(f'{DJANGO_API_URL}users/{sender_id}/')
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        full_name = user_data['full_name']
+        organization_id = user_data["organization_id"]
+        org_response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+        if org_response.status_code == 200:
+            organization_name = org_response.json().get('organization', 'Неизвестная организация')
+        else:
+            organization_name = 'Неизвестная организация'
+    else:
+        full_name = "Неизвестный пользователь"
+        organization_name = "Неизвестная организация"
+
+    created_at = ticket_data['created_at'].split('T')[0]
+
+    ticket_info = (f"Запрос от *{full_name} — {organization_name}*\n"
+                   f"Дата: {created_at}\n"
+                   f"Вопрос: {ticket_data['question']}\n"
+
+                   )
+    photo_ids = ticket_data.get('photo_ids', [])
+    media_group = []
+
+    for idx, photo_id in enumerate(photo_ids):
+        if photo_id:
+            if idx == 0:
+                media_group.append(InputMediaPhoto(media=photo_id, caption=ticket_info, parse_mode=ParseMode.MARKDOWN))
+            else:
+                media_group.append(InputMediaPhoto(media=photo_id))
+
+    keyboard = [
+        [InlineKeyboardButton("Ответить", callback_data=f"answer_{ticket_id}")],
+        [InlineKeyboardButton("Назад", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if media_group:
+        await context.bot.send_media_group(chat_id=query.message.chat.id, media=media_group, parse_mode=ParseMode.MARKDOWN,)
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text="Выберите действие:",
+            reply_markup=reply_markup
+        )
+    else:
+        await query.message.reply_text(ticket_info, parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text="Выберите действие:",
+            reply_markup=reply_markup
+        )
+
+async def handle_support_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ticket_id = context.user_data.get('ticket_id')
+    answer = update.message.text
+
+    response = requests.get(f'{DJANGO_API_URL}support_tickets/{ticket_id}').json()
+    sender_question = response['question']
+    # Получаем ID пользователя
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat_id}/')
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        respondent_id = user_data['id']
+    else:
+        await update.message.reply_text('Ошибка при получении данных пользователя.')
+        return
+
+    # Обновляем запрос техподдержки
+    update_data = {
+        'answer': answer,
+        'respondent_id': respondent_id,
+        'status': 'closed'
+    }
+    response = requests.patch(f'{DJANGO_API_URL}support_tickets/{ticket_id}', json=update_data)
+    if response.status_code == 200:
+        await update.message.reply_text('Ответ отправлен. Запрос закрыт.')
+
+        context.user_data['stage'] = None
+        # Отправка уведомления отправителю
+        ticket_data = response.json()
+        sender_id = ticket_data["sender_id"]
+        sender_response = requests.get(f'{DJANGO_API_URL}users/{sender_id}/')
+        if sender_response.status_code == 200:
+            sender_data = sender_response.json()
+            sender_chat_id = sender_data['chat_id']
+
+            await context.bot.send_message(chat_id=sender_chat_id, text=f'*Ваш запрос получил ответ.*\n\n'
+                                                                        f'*Ваш запрос:* {sender_question} \n\n'
+                                                                        f'*Технический специалист направил Вам ответ:* {answer}',
+                                           parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text('Ошибка при отправке уведомления отправителю.')
+    else:
+        await update.message.reply_text('Ошибка при обновлении запроса техподдержки.')
+
+    # Возврат в главное меню
+    await send_main_menu(update.message.chat_id, context, user_data['full_name'], user_data['organization_id'])
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -6233,6 +6492,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         await send_warehouses_list_montage(query.message.chat.id, context)
 
+    elif data == 'support':
+        await query.message.delete()
+        context.user_data['stage'] = 'support_question'
+        await query.message.reply_text('Пожалуйста, введите ваш вопрос для тех. поддержки:')
+
+    elif data.startswith('ticket_'):
+        ticket_id = int(data.split('_')[1])
+        await handle_ticket_selection(update, context, ticket_id)
+
+    elif data.startswith('answer_'):
+        await query.message.delete()
+        ticket_id = int(data.split('_')[1])
+        context.user_data['ticket_id'] = ticket_id
+        context.user_data['stage'] = 'support_answer'
+        await query.message.reply_text('Введите ваш ответ:')
+
+
+
 def main() -> None:
     # Вставьте свой токен
     application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
@@ -6241,6 +6518,7 @@ def main() -> None:
     application.add_handler(CommandHandler("choice", choose_organization))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("done", handle_done_command))
+    application.add_handler(CommandHandler("tech", handle_tech_command))
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_workforce_count))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo_upload))
