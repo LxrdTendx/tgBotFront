@@ -6459,10 +6459,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data['selected_prefab_subtype_id'] = prefab_subtype_id
         await send_prefabs(query.message.chat_id, context, prefab_subtype_id)
 
-    elif data.startswith('remark_'):
-        await query.message.delete()
-        remark_id = int(data.split('_')[1])
-        await choose_stage_for_prefab(query, context, remark_id)
+
 
     elif data.startswith('prefab_stage_'):
         await query.message.delete()
@@ -6580,6 +6577,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         await handle_accept_stock_quantity(update, context, remark=True)
 
+    elif data.startswith('remark_'):
+        await query.message.delete()
+        remark_id = int(data.split('_')[1])
+        await choose_stage_for_prefab(query, context, remark_id)
 
     elif data.startswith('selectwarehouse_for_montage_'):
         await query.message.delete()
