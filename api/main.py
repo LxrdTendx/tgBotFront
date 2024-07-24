@@ -16,8 +16,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
-DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
+DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
+# DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
 Base = declarative_base()
 
 # Database models
