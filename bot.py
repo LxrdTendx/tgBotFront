@@ -22,6 +22,7 @@ import platform
 from docx import Document
 from docx.shared import Pt
 from datetime import datetime
+import asyncio
 from collections import defaultdict
 
 # Включаем логирование
@@ -2966,7 +2967,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                     )
                 )
                 # Отправка данных в Google Sheets
-                await send_workforce_to_google_sheets(
+                asyncio.create_task(send_workforce_to_google_sheets(
                     object_name,
                     block_section_name,
                     floor,
@@ -2974,7 +2975,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                     organization_name,
                     workforce_count,
                     id_workforce,
-                )
+                ))
             else:
                 await update.message.reply_text(f'Ошибка при передаче численности: {response.text}')
         except ValueError:
@@ -3008,7 +3009,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                     await send_main_menu(update.message.chat.id, context, full_name, organization_id)
 
                     # Отправка данных в Google Sheets
-                    await update_workforce_in_google_sheets(
+                    asyncio.create_task(update_workforce_in_google_sheets(
                         workforce_data['id'],
                         workforce_data['object_id'],
                         workforce_data['block_section_id'],
@@ -3016,7 +3017,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                         workforce_data['work_type_id'],
                         workforce_data['organization_id'],
                         new_workforce_count
-                    )
+                    ))
 
                 else:
                     await update.message.reply_text('Ошибка при обновлении численности в базе данных.')
@@ -3137,7 +3138,7 @@ async def handle_delete_workforce(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text('Запись успешно удалена.')
 
             # Отправка данных в Google Sheets
-            await delete_workforce_in_google_sheets(workforce_id)
+            asyncio.create_task(delete_workforce_in_google_sheets(workforce_id))
         else:
             await update.message.reply_text('Ошибка при удалении записи из базы данных.')
     except Exception as e:
