@@ -97,6 +97,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     password = context.args[0] if context.args else None
 
+    context.user_data['stage'] = None
+
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
 
 
