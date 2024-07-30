@@ -98,7 +98,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     password = context.args[0] if context.args else None
 
     context.user_data['stage'] = None
-
+    reset_user_states(context)
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
 
 
@@ -304,6 +304,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     stage = context.user_data.get('stage')
 
+    reset_user_states(context)
 
 
     if stage == 'get_full_name':
@@ -683,6 +684,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 context.user_data['stage'] = 'get_password'
 
 
+def reset_user_states(context):
+    context.user_data['expecting_workforce_count'] = False
+    context.user_data['expecting_new_workforce_count'] = False
+    context.user_data['expecting_volume_count'] = False
+    context.user_data['expecting_new_volume_count'] = False
+    context.user_data['expecting_prefab_quantity'] = False
+    context.user_data['expecting_shipment_quantity'] = False
+    context.user_data['expecting_sgp_quantity'] = False
+    context.user_data['expecting_new_status_quantity'] = False
+    context.user_data['refactor_prefab_count'] = False
+    context.user_data['expecting_new_status_prefab'] = False
+
 async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name: str, organization_id: int) -> None:
     if not organization_id:
         await context.bot.send_message(
@@ -691,6 +704,7 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         )
         return
 
+    reset_user_states(context)
     # Получаем информацию об организации по ID
     response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
     if response.status_code == 200:
@@ -5636,6 +5650,8 @@ async def handle_refactor_prefab_quantity(update: Update, context: ContextTypes.
         except ValueError:
             await update.message.reply_text('Пожалуйста, введите корректное число.')
             context.user_data['refactor_prefab_count'] = True
+        finally:
+            context.user_data['refactor_prefab_count'] = False
 
 async def handle_new_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
