@@ -13,11 +13,17 @@ import time
 import logging
 
 
+
+
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
+
+# DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
 Base = declarative_base()
 
 # Database models
@@ -31,6 +37,8 @@ class Organization(Base):
     object_ids = Column(JSON, nullable=True, default=list)
     factory = Column(Boolean, default=False)  # Добавлено поле factory
 
+    def __str__(self):
+        return self.organization
 
 class User(Base):
     __tablename__ = "users"
@@ -46,6 +54,8 @@ class User(Base):
     organization = relationship("Organization", back_populates="users")
     object = relationship("Object")  # Добавлено отношение
 
+    def __str__(self):
+        return f"{self.full_name}"
 
 Organization.users = relationship("User", order_by=User.id, back_populates="organization")
 
@@ -56,6 +66,8 @@ class WorkType(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
 
+    def __str__(self):
+        return self.name
 
 class Object(Base):
     __tablename__ = "objects"
@@ -64,6 +76,8 @@ class Object(Base):
     name = Column(String, unique=True, index=True)
     work_types_ids = Column(JSON, nullable=True, default=list)  # Добавляем новое поле
 
+    def __str__(self):
+        return self.name
 
 class BlockSection(Base):
     __tablename__ = "blocksections"
@@ -75,6 +89,8 @@ class BlockSection(Base):
 
     object = relationship("Object", back_populates="block_sections")
 
+    def __str__(self):
+        return self.name
 
 Object.block_sections = relationship("BlockSection", order_by=BlockSection.id, back_populates="object")
 
@@ -153,12 +169,18 @@ class Volume(Base):
     organization = relationship("Organization")
     block_section = relationship("BlockSection")
 
+    def __str__(self):
+        return f"{self.id}"
+
 
 class PrefabType(Base):
     __tablename__ = "prefab_types"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
+
+    def __str__(self):
+        return self.name
 
 
 class Prefab(Base):
@@ -180,6 +202,9 @@ class Prefab(Base):
     object = relationship("Object")
     organization = relationship("Organization")
 
+    def __str__(self):
+        return f"{self.object_id} - {self.organization_id} - {self.quantity}"
+
 class PrefabSubtype(Base):
     __tablename__ = "prefab_subtypes"
 
@@ -188,6 +213,9 @@ class PrefabSubtype(Base):
     prefabtype_id = Column(Integer, ForeignKey("prefab_types.id"), nullable=False)
 
     prefab_type = relationship("PrefabType")
+
+    def __str__(self):
+        return self.name
 
 class PrefabsInWork(Base):
     __tablename__ = "prefabs_in_work"
@@ -209,6 +237,11 @@ class PrefabsInWork(Base):
     warehouse = relationship("Warehouse", back_populates="prefabs_in_work")
     block_section = relationship("BlockSection")
 
+    def __str__(self):
+        prefab_type = self.prefab.prefab_type.name if self.prefab.prefab_type else "Unknown Type"
+        prefab_subtype = self.prefab.prefab_subtype.name if self.prefab.prefab_subtype else "Unknown Subtype"
+        object_name = self.prefab.object.name if self.prefab.object else "Unknown Object"
+        return f"{prefab_type} - {prefab_subtype} - {object_name}"
 
 
 class Warehouse(Base):
@@ -219,6 +252,8 @@ class Warehouse(Base):
 
     prefabs_in_work = relationship("PrefabsInWork", back_populates="warehouse")
 
+    def __str__(self):
+        return self.name
 
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
@@ -237,6 +272,10 @@ class SupportTicket(Base):
     photo_ids = Column(JSON, default=list)
 
     created_at = Column(DateTime(timezone=True), default=get_moscow_time)
+
+
+    def __str__(self):
+        return f"{self.sender_id} - {self.created_at}"
 
 # Pydantic models
 class OrganizationBase(BaseModel):
@@ -627,6 +666,8 @@ async def startup():
     except Exception as e:
         logger.error(f"Failed to connect to database: {e}")
 
+
+
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Disconnecting from database...")
@@ -841,7 +882,7 @@ def create_organization(organization: OrganizationCreate, db: Session = Depends(
 
 
 @app.get("/organizations/", response_model=List[OrganizationResponse])
-def read_organizations(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+def read_organizations(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     organizations = db.query(Organization).offset(skip).limit(limit).all()
     return organizations
 
@@ -876,7 +917,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/users/", response_model=List[UserResponse])
-def read_users(skip: int = 0, limit: int = 100, organization_id: Optional[int] = None, db: Session = Depends(get_db)):
+def read_users(skip: int = 0, limit: int = 1000, organization_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(User)
     if organization_id is not None:
         query = query.filter(User.organization_id == organization_id)
@@ -970,7 +1011,7 @@ def update_object(object_id: int, object: ObjectUpdate, db: Session = Depends(ge
     return db_object
 
 @app.get("/objects/", response_model=List[ObjectResponse])
-def read_objects(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_objects(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     objects = db.query(Object).offset(skip).limit(limit).all()
     return objects
 
@@ -998,8 +1039,8 @@ def create_block_section(block_section: BlockSectionCreate, db: Session = Depend
 
 
 @app.get("/blocksections/", response_model=List[BlockSectionResponse])
-def read_block_sections(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
-    block_sections = db.query(BlockSection).offset(skip).limit(limit).all()
+def read_block_sections(skip: int = 0, db: Session = Depends(get_db)):
+    block_sections = db.query(BlockSection).offset(skip).all()
     return block_sections
 
 
@@ -1029,11 +1070,11 @@ def create_front_transfer(front_transfer: FrontTransferCreate, db: Session = Dep
 
 
 @app.get("/fronttransfers/", response_model=List[FrontTransferResponse])
-def read_front_transfers(skip: int = 0, limit: int = 10, status: Optional[str] = None, db: Session = Depends(get_db)):
+def read_front_transfers(skip: int = 0, status: Optional[str] = None, db: Session = Depends(get_db)):
     if status:
-        front_transfers = db.query(FrontTransfer).filter(FrontTransfer.status == status).offset(skip).limit(limit).all()
+        front_transfers = db.query(FrontTransfer).filter(FrontTransfer.status == status).offset(skip).all()
     else:
-        front_transfers = db.query(FrontTransfer).offset(skip).limit(limit).all()
+        front_transfers = db.query(FrontTransfer).offset(skip).all()
     return front_transfers
 
 
@@ -1182,7 +1223,7 @@ def create_prefab_type(prefab_type: PrefabTypeCreate, db: Session = Depends(get_
     return create_prefab_type(db, prefab_type)
 
 @app.get("/prefab_types/", response_model=List[PrefabTypeResponse])
-def read_prefab_types(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_prefab_types(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     prefab_types = db.query(PrefabType).offset(skip).limit(limit).all()
     return prefab_types
 
@@ -1245,8 +1286,8 @@ def create_prefabs_in_work_endpoint(prefabs_in_work: PrefabsInWorkCreate, db: Se
     return create_prefabs_in_work(db, prefabs_in_work)
 
 @app.get("/prefabs_in_work/", response_model=List[PrefabsInWorkResponse])
-def read_prefabs_in_work(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    prefabs_in_work = db.query(PrefabsInWork).offset(skip).limit(limit).all()
+def read_prefabs_in_work(skip: int = 0, db: Session = Depends(get_db)):
+    prefabs_in_work = db.query(PrefabsInWork).offset(skip).all()
     return prefabs_in_work
 @app.get("/prefabs_in_work/{prefabs_in_work_id}", response_model=PrefabsInWorkResponse)
 def read_prefabs_in_work(prefabs_in_work_id: int, db: Session = Depends(get_db)):
@@ -1313,7 +1354,7 @@ def update_prefabs_in_work_endpoint(prefabs_in_work_id: int, prefabs_in_work: Pr
     return db_prefabs_in_work
 
 @app.get("/prefab_subtypes/", response_model=List[PrefabSubtypeResponse])
-def read_prefab_subtypes(prefab_type_id: Optional[int] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_prefab_subtypes(prefab_type_id: Optional[int] = None, skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     query = db.query(PrefabSubtype)
     if prefab_type_id:
         query = query.filter(PrefabSubtype.prefabtype_id == prefab_type_id)
@@ -1329,13 +1370,13 @@ def read_prefab_subtype(prefab_subtype_id: int, db: Session = Depends(get_db)):
     return db_prefab_subtype
 
 @app.get("/prefabs/", response_model=List[PrefabResponse])
-def read_prefabs(prefab_type_id: Optional[int] = None, prefab_subtype_id: Optional[int] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_prefabs(prefab_type_id: Optional[int] = None, prefab_subtype_id: Optional[int] = None, skip: int = 0, db: Session = Depends(get_db)):
     query = db.query(Prefab)
     if prefab_type_id:
         query = query.filter(Prefab.prefab_type_id == prefab_type_id)
     if prefab_subtype_id:
         query = query.filter(Prefab.prefab_subtype_id == prefab_subtype_id)
-    prefabs = query.offset(skip).limit(limit).all()
+    prefabs = query.offset(skip).all()
     return prefabs
 
 
@@ -1353,7 +1394,7 @@ def create_warehouse_endpoint(warehouse: WarehouseCreate, db: Session = Depends(
 
 
 @app.get("/warehouses/", response_model=List[WarehouseResponse])
-def read_warehouses(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_warehouses(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     warehouses = db.query(Warehouse).offset(skip).limit(limit).all()
     return warehouses
 
@@ -1411,6 +1452,73 @@ def update_support_ticket(ticket_id: int, ticket: SupportTicketUpdate, db: Sessi
     db.commit()
     db.refresh(db_ticket)
     return db_ticket
+
+
+
+#АДМИН ПАНЕЛЬ
+from sqladmin import Admin, ModelView
+
+# Настройка SQLAlchemy Admin
+admin = Admin(app, engine)
+
+# Создаем ModelView для каждой модели
+class OrganizationAdmin(ModelView, model=Organization):
+    column_list = [Organization.id, Organization.organization, Organization.is_general_contractor, Organization.work_types_ids, Organization.object_ids, Organization.factory]
+
+class UserAdmin(ModelView, model=User):
+    column_list = [User.id, User.chat_id, User.full_name, User.is_authorized, User.organization_id, User.object_id]
+
+class WorkTypeAdmin(ModelView, model=WorkType):
+    column_list = [WorkType.id, WorkType.name]
+
+class ObjectAdmin(ModelView, model=Object):
+    column_list = [Object.id, Object.name, Object.work_types_ids]
+
+class BlockSectionAdmin(ModelView, model=BlockSection):
+    column_list = [BlockSection.id, BlockSection.object_id, BlockSection.name, BlockSection.number_of_floors]
+
+class FrontTransferAdmin(ModelView, model=FrontTransfer):
+    column_list = [FrontTransfer.id, FrontTransfer.sender_id, FrontTransfer.object_id, FrontTransfer.work_type_id, FrontTransfer.block_section_id, FrontTransfer.floor, FrontTransfer.status, FrontTransfer.photo1, FrontTransfer.photo2, FrontTransfer.photo3, FrontTransfer.photo4, FrontTransfer.photo5, FrontTransfer.receiver_id, FrontTransfer.remarks, FrontTransfer.next_work_type_id, FrontTransfer.boss_id, FrontTransfer.created_at, FrontTransfer.approval_at, FrontTransfer.photo_ids, FrontTransfer.sender_chat_id]
+
+class FrontWorkforceAdmin(ModelView, model=FrontWorkforce):
+    column_list = [FrontWorkforce.id, FrontWorkforce.object_id, FrontWorkforce.block_section_id, FrontWorkforce.floor, FrontWorkforce.work_type_id, FrontWorkforce.organization_id, FrontWorkforce.workforce_count, FrontWorkforce.date, FrontWorkforce.user_id]
+
+class VolumeAdmin(ModelView, model=Volume):
+    column_list = [Volume.id, Volume.work_type_id, Volume.volume, Volume.user_id, Volume.date, Volume.object_id, Volume.organization_id, Volume.block_section_id, Volume.floor]
+
+class PrefabTypeAdmin(ModelView, model=PrefabType):
+    column_list = [PrefabType.id, PrefabType.name]
+
+class PrefabAdmin(ModelView, model=Prefab):
+    column_list = [Prefab.id, Prefab.prefab_type_id, Prefab.prefab_subtype_id, Prefab.planned_delivery_date, Prefab.actual_delivery_date, Prefab.deficit, Prefab.quantity, Prefab.object_id, Prefab.organization_id, Prefab.comment]
+
+class PrefabSubtypeAdmin(ModelView, model=PrefabSubtype):
+    column_list = [PrefabSubtype.id, PrefabSubtype.name, PrefabSubtype.prefabtype_id]
+
+class PrefabsInWorkAdmin(ModelView, model=PrefabsInWork):
+    column_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.warehouse_id, PrefabsInWork.photos, PrefabsInWork.comments, PrefabsInWork.block_section_id, PrefabsInWork.floor]
+
+class WarehouseAdmin(ModelView, model=Warehouse):
+    column_list = [Warehouse.id, Warehouse.name]
+
+class SupportTicketAdmin(ModelView, model=SupportTicket):
+    column_list = [SupportTicket.id, SupportTicket.sender_id, SupportTicket.question, SupportTicket.answer, SupportTicket.respondent_id, SupportTicket.status, SupportTicket.photo_ids, SupportTicket.created_at]
+
+# Добавляем ModelView в админ панель
+admin.add_view(OrganizationAdmin)
+admin.add_view(UserAdmin)
+admin.add_view(WorkTypeAdmin)
+admin.add_view(ObjectAdmin)
+admin.add_view(BlockSectionAdmin)
+admin.add_view(FrontTransferAdmin)
+admin.add_view(FrontWorkforceAdmin)
+admin.add_view(VolumeAdmin)
+admin.add_view(PrefabTypeAdmin)
+admin.add_view(PrefabAdmin)
+admin.add_view(PrefabSubtypeAdmin)
+admin.add_view(PrefabsInWorkAdmin)
+admin.add_view(WarehouseAdmin)
+admin.add_view(SupportTicketAdmin)
 
 
 # Запуск FastAPI

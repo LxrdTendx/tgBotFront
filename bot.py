@@ -1272,6 +1272,9 @@ async def finalize_photo_upload_prefab_in_work(update: Update, context: ContextT
                     if status == 'remark':
                         notification_text = (f"Инженер по качеству во время отгрузки обнаружил брак. Комментарий: {comment}\n\n"
                                              f"Перейдите во вкладку *Замечания* для изменения статуса.")
+                    elif status == 'stock':
+                        return
+
                     else:
                         notification_text = f"Генеральный подрядчик оставил комментарий: {comment}"
 
@@ -7117,7 +7120,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     # Вставьте свой токен
-    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
+    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
 
     application.add_handler(CommandHandler("info", welcome_message))
     application.add_handler(CommandHandler("choice", choose_organization))
