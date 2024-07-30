@@ -7120,7 +7120,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     # Вставьте свой токен
-    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
+    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
 
     application.add_handler(CommandHandler("info", welcome_message))
     application.add_handler(CommandHandler("choice", choose_organization))
