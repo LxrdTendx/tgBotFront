@@ -1876,6 +1876,7 @@ async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front
     try:
         await query.message.delete()
         await query.message.reply_text(text="Создание документа, подождите...")
+        await query.edit_message_reply_markup(reply_markup=None)
     except telegram.error.BadRequest:
         logger.warning("Message to delete not found")
 
@@ -5020,27 +5021,51 @@ async def handle_montage_quantity(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def send_block_sections_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
-    response = requests.get(f'{DJANGO_API_URL}blocksections/')
-    if response.status_code == 200:
-        block_sections = response.json()
-        if block_sections:
-            keyboard = [[InlineKeyboardButton(block_section['name'], callback_data=f'select_block_section_{block_section["id"]}')]
-                        for block_section in block_sections]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+    user_chat_id = chat_id
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_chat_id}')
+
+    if user_response.status_code == 200:
+        user_data = user_response.json()
+        organization_id = user_data['organization_id']
+        object_id = user_data['object_id']  # Получаем object_id из context
+
+        if organization_id is None:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Выберите секцию:",
-                reply_markup=reply_markup
+                text="Ошибка: пользователь не принадлежит ни одной организации."
             )
+            return
+
+        response = requests.get(f'{DJANGO_API_URL}blocksections/')
+        if response.status_code == 200:
+            block_sections = response.json()
+            filtered_block_sections = [bs for bs in block_sections if bs['object_id'] == object_id]
+
+            if filtered_block_sections:
+                keyboard = [
+                    [InlineKeyboardButton(bs['name'], callback_data=f'select_block_section_{bs["id"]}')]
+                    for bs in filtered_block_sections
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Выберите секцию:",
+                    reply_markup=reply_markup
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Секции не найдены."
+                )
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Секции не найдены."
+                text="Ошибка при получении списка секций. Попробуйте снова."
             )
     else:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Ошибка при получении списка секций. Попробуйте снова."
+            text="Ошибка при получении данных пользователя. Попробуйте снова."
         )
 
 async def send_floors_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
@@ -5829,7 +5854,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}fronttransfers/?sender_chat_id={user_id}&status=in_process')
         if response.status_code == 200:
             fronts = response.json()
-            if fronts:
+            user_has_fronts_in_object = any(front['object_id'] == object_id for front in fronts)
+            if user_has_fronts_in_object:
                 await choose_existing_front(query, context, fronts, object_id)
             else:
                 await choose_work_type(query, context, object_id)
