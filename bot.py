@@ -5039,7 +5039,7 @@ async def send_block_sections_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        response = requests.get(f'{DJANGO_API_URL}blocksections/')
+        response = requests.get(f'{DJANGO_API_URL}objects/{object_id}/blocksections/')
         if response.status_code == 200:
             block_sections = response.json()
             filtered_block_sections = [bs for bs in block_sections if bs['object_id'] == object_id]
