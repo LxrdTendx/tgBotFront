@@ -4301,19 +4301,17 @@ async def send_prefabs_list(chat_id, context: ContextTypes.DEFAULT_TYPE, status:
         await send_main_menu(chat_id, context, user_data.get('full_name', 'Пользователь'), user_data.get('organization_id', None))
         return
 
-    # Получаем все префабы в работе с нужным статусом
     response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/')
     if response.status_code == 200:
         prefabs_in_work = response.json()
         prefabs_in_work = [p for p in prefabs_in_work if p['status'] == status]
 
         if prefabs_in_work:
-            messages = []
+            aggregated_prefabs = {}
             for prefab in prefabs_in_work:
                 prefab_id = prefab['prefab_id']
                 quantity = prefab.get('quantity', 0)
 
-                # Получаем данные о префабе
                 prefab_response = requests.get(f'{DJANGO_API_URL}prefabs/{prefab_id}')
                 if prefab_response.status_code == 200:
                     prefab_data = prefab_response.json()
@@ -4325,31 +4323,31 @@ async def send_prefabs_list(chat_id, context: ContextTypes.DEFAULT_TYPE, status:
                     prefab_subtype_id = prefab_data['prefab_subtype_id']
                     prefab_org_id = prefab_data.get('organization_id')
 
-                    # Получаем имя prefab_type
                     type_response = requests.get(f'{DJANGO_API_URL}prefab_types/{prefab_type_id}')
                     if type_response.status_code == 200:
                         prefab_type_name = type_response.json().get('name', 'Неизвестный тип')
                     else:
                         prefab_type_name = 'Неизвестный тип'
 
-                    # Получаем имя prefab_subtype
                     subtype_response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab_subtype_id}')
                     if subtype_response.status_code == 200:
                         prefab_subtype_name = subtype_response.json().get('name', 'Неизвестный подтип')
                     else:
                         prefab_subtype_name = 'Неизвестный подтип'
 
-                    # Получаем имя организации
                     org_response = requests.get(f'{DJANGO_API_URL}organizations/{prefab_org_id}')
                     if org_response.status_code == 200:
                         org_name = org_response.json().get('organization', 'Неизвестная организация')
                     else:
                         org_name = 'Неизвестная организация'
 
-                    message = f"{org_name} — {prefab_type_name} — {prefab_subtype_name} — {quantity}шт."
-                    messages.append(message)
+                    key = f"{org_name} — {prefab_type_name} — {prefab_subtype_name}"
+                    if key not in aggregated_prefabs:
+                        aggregated_prefabs[key] = 0
+                    aggregated_prefabs[key] += quantity
 
-            if messages:
+            if aggregated_prefabs:
+                messages = [f"{key} — {quantity}шт." for key, quantity in aggregated_prefabs.items()]
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="\n".join(messages)
@@ -4359,7 +4357,6 @@ async def send_prefabs_list(chat_id, context: ContextTypes.DEFAULT_TYPE, status:
                     chat_id=chat_id,
                     text="Нет префабов с указанным статусом."
                 )
-
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4371,6 +4368,7 @@ async def send_prefabs_list(chat_id, context: ContextTypes.DEFAULT_TYPE, status:
             text="Ошибка при получении префабов. Попробуйте снова."
         )
     await send_main_menu(chat_id, context, user_data.get('full_name', 'Пользователь'), user_data.get('organization_id', None))
+
 
 
 async def send_warehouses_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
@@ -5053,43 +5051,51 @@ async def send_prefabs_list_montage(chat_id, context: ContextTypes.DEFAULT_TYPE)
     prefab_subtype_id = context.user_data['selected_prefab_subtype_id']
     warehouse_id = context.user_data['selected_warehouse_id']
 
-    # Получаем все префабы
     response = requests.get(f'{DJANGO_API_URL}prefabs/')
     if response.status_code == 200:
         all_prefabs = response.json()
-        # Фильтруем префабы по типу и подтипу
         prefabs = [p for p in all_prefabs if p['prefab_type_id'] == prefab_type_id and p['prefab_subtype_id'] == prefab_subtype_id]
 
         if prefabs:
-            prefabs_in_stock = []
+            prefab_in_stock_dict = {}
             for prefab in prefabs:
                 prefab_id = prefab['id']
-
-                # Получаем все записи prefabs_in_work для текущего prefab_id
                 prefabs_in_work_response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/')
                 if prefabs_in_work_response.status_code == 200:
                     all_prefabs_in_work = prefabs_in_work_response.json()
-                    # Фильтруем префабы по статусу 'in_stock' и warehouse_id
                     prefabs_in_stock_filtered = [p for p in all_prefabs_in_work if p['prefab_id'] == prefab_id and p['status'] == 'stock' and p['warehouse_id'] == warehouse_id]
 
-                    if prefabs_in_stock_filtered:
-                        for prefab_in_stock in prefabs_in_stock_filtered:
-                            quantity = prefab_in_stock['quantity']
+                    for prefab_in_stock in prefabs_in_stock_filtered:
+                        prefab_in_work_id = prefab_in_stock['id']
+                        quantity = prefab_in_stock['quantity']
 
-                            # Получаем дополнительную информацию
-                            prefab_type_response = requests.get(f'{DJANGO_API_URL}prefab_types/{prefab_type_id}')
-                            prefab_subtype_response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab_subtype_id}')
-                            organization_response = requests.get(f'{DJANGO_API_URL}organizations/{prefab["organization_id"]}')
+                        if prefab_id not in prefab_in_stock_dict:
+                            prefab_in_stock_dict[prefab_id] = {
+                                'quantity': 0,
+                                'prefabs_in_work_ids': []
+                            }
+                        prefab_in_stock_dict[prefab_id]['quantity'] += quantity
+                        prefab_in_stock_dict[prefab_id]['prefabs_in_work_ids'].append({
+                            'id': prefab_in_work_id,
+                            'quantity': quantity
+                        })
 
-                            if prefab_type_response.status_code == 200 and prefab_subtype_response.status_code == 200 and organization_response.status_code == 200:
-                                prefab_type_name = prefab_type_response.json()['name']
-                                prefab_subtype_name = prefab_subtype_response.json()['name']
-                                organization_name = organization_response.json()['organization']
+            prefabs_in_stock = []
+            for prefab_id, data in prefab_in_stock_dict.items():
+                prefab = next(p for p in prefabs if p['id'] == prefab_id)
+                prefab_type_response = requests.get(f'{DJANGO_API_URL}prefab_types/{prefab_type_id}')
+                prefab_subtype_response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab_subtype_id}')
+                organization_response = requests.get(f'{DJANGO_API_URL}organizations/{prefab["organization_id"]}')
 
-                                button_text = f"{quantity} шт. - {prefab_type_name} - {prefab_subtype_name} - {organization_name}"
-                                prefabs_in_stock.append(
-                                    [InlineKeyboardButton(button_text, callback_data=f'prefabin_stock_{prefab_in_stock["id"]}')]
-                                )
+                if prefab_type_response.status_code == 200 and prefab_subtype_response.status_code == 200 and organization_response.status_code == 200:
+                    prefab_type_name = prefab_type_response.json()['name']
+                    prefab_subtype_name = prefab_subtype_response.json()['name']
+                    organization_name = organization_response.json()['organization']
+
+                    button_text = f"{data['quantity']} шт. - {prefab_type_name} - {prefab_subtype_name} - {organization_name}"
+                    prefabs_in_stock.append(
+                        [InlineKeyboardButton(button_text, callback_data=f'prefabin_stock_{prefab_id}')]
+                    )
 
             if prefabs_in_stock:
                 prefabs_in_stock.append([InlineKeyboardButton("Назад", callback_data='montage')])
@@ -5119,6 +5125,7 @@ async def send_prefabs_list_montage(chat_id, context: ContextTypes.DEFAULT_TYPE)
         await send_main_menu(chat_id, context)
 
 
+
 async def handle_montage_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_input = update.message.text
     if not user_input.isdigit():
@@ -5126,27 +5133,77 @@ async def handle_montage_quantity(update: Update, context: ContextTypes.DEFAULT_
         return
 
     quantity = int(user_input)
-    prefabs_in_work_id = context.user_data['selected_prefab_in_work_id']
+    prefab_id = context.user_data['selected_prefab_id']
 
-    # Получаем префаб из базы данных
-    response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}')
+    response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/')
     if response.status_code != 200:
-        await update.message.reply_text("Ошибка при получении префаба. Попробуйте снова.")
+        await update.message.reply_text("Ошибка при получении префабов. Попробуйте снова.")
         return
 
-    prefab = response.json()
-    remaining_quantity = prefab['quantity'] - quantity
+    all_prefabs_in_work = response.json()
+    prefabs_in_work = [p for p in all_prefabs_in_work if p['prefab_id'] == prefab_id and p['status'] == 'stock']
 
-    if remaining_quantity < 0:
+    total_quantity = sum(p['quantity'] for p in prefabs_in_work)
+
+    if total_quantity < quantity:
         await update.message.reply_text("Недостаточное количество на складе. Попробуйте снова.")
         return
 
-    context.user_data['quantity'] = quantity
-    context.user_data['remaining_quantity'] = remaining_quantity
-    context.user_data['prefab'] = prefab
+    remaining_quantity = quantity
+    prefabs_for_montage = []
 
+    for prefab in prefabs_in_work:
+        if remaining_quantity <= 0:
+            break
+
+        if prefab['quantity'] <= remaining_quantity:
+            prefabs_for_montage.append({
+                'id': prefab['id'],
+                'quantity': prefab['quantity'],
+                'status': 'montage'
+            })
+            remaining_quantity -= prefab['quantity']
+        else:
+            prefabs_for_montage.append({
+                'id': prefab['id'],
+                'quantity': remaining_quantity,
+                'status': 'montage'
+            })
+            remaining_quantity = 0
+
+    # Обновление статуса и количества префабов
+    for prefab in prefabs_for_montage:
+        if prefab['quantity'] < next(p['quantity'] for p in prefabs_in_work if p['id'] == prefab['id']):
+            remaining_stock_quantity = next(p['quantity'] for p in prefabs_in_work if p['id'] == prefab['id']) - prefab['quantity']
+            # Создаем новый префаб для оставшегося количества со статусом 'stock'
+            new_prefab_data = {
+                'prefab_id': prefab_id,
+                'quantity': remaining_stock_quantity,
+                'status': 'stock',
+                'warehouse_id': next(p['warehouse_id'] for p in prefabs_in_work if p['id'] == prefab['id'])
+            }
+            response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
+            if response.status_code != 201:
+                await update.message.reply_text("Ошибка при создании нового префаба со статусом 'stock'. Попробуйте снова.")
+                return
+
+            # Обновляем количество и статус текущего префаба
+            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'quantity': prefab['quantity'], 'status': 'montage'})
+            if response.status_code != 200:
+                await update.message.reply_text("Ошибка при обновлении статуса и количества. Попробуйте снова.")
+                return
+        else:
+            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'status': 'montage'})
+            if response.status_code != 200:
+                await update.message.reply_text("Ошибка при обновлении статуса. Попробуйте снова.")
+                return
+
+    context.user_data['prefabs_for_montage'] = prefabs_for_montage
     await update.message.reply_text("Теперь выберите секцию:")
     await send_block_sections_list(update.message.chat.id, context)
+
+
+
 
 async def send_block_sections_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
     user_chat_id = chat_id
@@ -5246,54 +5303,21 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
     floor = query.data.split('_')[-1]
     context.user_data['selected_floor'] = floor
 
-    # Получаем данные для обновления или создания нового префаба
-    prefabs_in_work_id = context.user_data['selected_prefab_in_work_id']
-    quantity = context.user_data['quantity']
-    remaining_quantity = context.user_data['remaining_quantity']
-    prefab = context.user_data['prefab']
+    prefabs_for_montage = context.user_data['prefabs_for_montage']
     block_section_id = context.user_data['selected_block_section_id']
 
-    if remaining_quantity == 0:
-        # Обновляем статус текущего префаба
-        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'status': 'montage'})
+    for prefab in prefabs_for_montage:
+        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'block_section_id': block_section_id, 'floor': floor})
         if response.status_code != 200:
-            await query.message.reply_text("Ошибка при обновлении статуса. Попробуйте снова.")
+            await query.message.reply_text("Ошибка при обновлении секции и этажа. Попробуйте снова.")
             return
-
-        context.user_data['new_prefab_in_work_id'] = prefabs_in_work_id
-    else:
-        # Обновляем количество текущего префаба
-        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'quantity': remaining_quantity})
-        if response.status_code != 200:
-            await query.message.reply_text("Ошибка при обновлении количества. Попробуйте снова.")
-            return
-
-        # Создаем новый префаб для монтажа
-        new_prefab_data = prefab.copy()
-        new_prefab_data['quantity'] = quantity
-        new_prefab_data['status'] = 'montage'
-        new_prefab_data.pop('id')  # Удаляем id чтобы создать новый объект
-        new_prefab_data['block_section_id'] = block_section_id  # Устанавливаем выбранную секцию
-        new_prefab_data['floor'] = floor  # Устанавливаем выбранный этаж
-
-        response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
-        if response.status_code != 201:
-            await query.message.reply_text("Ошибка при создании нового префаба для монтажа. Попробуйте снова.")
-            return
-
-        new_prefab = response.json()
-        context.user_data['new_prefab_in_work_id'] = new_prefab['id']
 
     await query.message.reply_text("Количество обновлено. Прикрепите фотографии для монтажа:")
     context.user_data['stage'] = 'attach_photos_prefab_in_montage'
 
 
 async def handle_prefab_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    prefab_in_work_id = context.user_data.get('new_prefab_in_work_id')
-    if prefab_in_work_id is None:
-        await update.message.reply_text('Ошибка: идентификатор префаба не найден. Попробуйте снова.')
-        return
-
+    prefab_ids = [p['id'] for p in context.user_data['prefabs_for_montage']]
     photos = context.user_data.get('photos', [])
     file_id = update.message.photo[-1].file_id
     photos.append(file_id)
@@ -5325,47 +5349,45 @@ async def handle_prefab_photo_upload(update: Update, context: ContextTypes.DEFAU
 
 
 async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    prefab_in_work_id = context.user_data.get('new_prefab_in_work_id')
+    prefab_ids = [p['id'] for p in context.user_data['prefabs_for_montage']]
     new_photos = context.user_data.get('photos', [])
 
-    # Получаем существующие фотографии
-    response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/{prefab_in_work_id}')
-    if response.status_code != 200:
-        await update.message.reply_text('Ошибка при получении существующих фотографий. Попробуйте снова.')
-        return
+    for prefab_id in prefab_ids:
+        response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}')
+        if response.status_code != 200:
+            await update.message.reply_text('Ошибка при получении существующих фотографий. Попробуйте снова.')
+            return
 
-    prefab = response.json()
-    existing_photos = prefab.get('photos', [])
-    all_photos = existing_photos + new_photos
+        prefab = response.json()
+        existing_photos = prefab.get('photos', [])
+        all_photos = existing_photos + new_photos
 
-    update_data = {'photos': all_photos}
-    response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab_in_work_id}', json=update_data)
+        update_data = {'photos': all_photos}
+        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}', json=update_data)
+        if response.status_code != 200:
+            await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
+            return
+
+    reply_markup_kb_main = ReplyKeyboardMarkup(reply_keyboard_main, resize_keyboard=True, one_time_keyboard=False)
+
+    await update.message.reply_text("\U00002705 Фотографии успешно загружены. Монтаж завершён.",
+                                    reply_markup=reply_markup_kb_main)
+
+    context.user_data['stage'] = None
+    context.user_data['photos'] = []
+
+    user_id = context.user_data.get('user_id')
+    if not user_id:
+        user_id = update.message.from_user.id
+
+    response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
     if response.status_code == 200:
-
-        reply_markup_kb_main = ReplyKeyboardMarkup(reply_keyboard_main, resize_keyboard=True, one_time_keyboard=False)
-
-        await update.message.reply_text("\U00002705 Фотографии успешно загружены. Монтаж завершён.",
-                                        reply_markup=reply_markup_kb_main)
-
-        context.user_data['stage'] = None
-        context.user_data['photos'] = []
-
-        # Получаем данные пользователя для вызова send_main_menu
-        user_id = context.user_data.get('user_id')
-        if not user_id:
-            # Получаем user_id из данных обновления (например, chat_id)
-            user_id = update.message.from_user.id
-
-        response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
-        if response.status_code == 200:
-            user_data = response.json()
-            full_name = user_data['full_name']
-            organization_id = user_data['organization_id']
-            await send_main_menu(update.message.chat.id, context, full_name, organization_id)
-        else:
-            await update.message.reply_text('Ошибка при получении данных пользователя.')
+        user_data = response.json()
+        full_name = user_data['full_name']
+        organization_id = user_data['organization_id']
+        await send_main_menu(update.message.chat.id, context, full_name, organization_id)
     else:
-        await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
+        await update.message.reply_text('Ошибка при получении данных пользователя.')
 
 
 async def handle_support_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5749,6 +5771,24 @@ async def handle_remark_quantity(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def send_prefabs_in_stage(chat_id, context, stage):
+    if 'user_id' not in context.user_data:
+        user_id = chat_id  # Используем chat_id в качестве user_id
+        context.user_data['user_id'] = user_id
+    else:
+        user_id = context.user_data['user_id']
+
+    # Получаем информацию о пользователе по user_id
+    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+    if user_response.status_code != 200:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Ошибка при получении данных пользователя. Попробуйте снова."
+        )
+        return
+    user_data = user_response.json()
+    user_organization_id = user_data['organization_id']
+
+    # Получаем все префабы в работе
     response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/')
     if response.status_code != 200:
         await context.bot.send_message(
@@ -5763,6 +5803,16 @@ async def send_prefabs_in_stage(chat_id, context, stage):
     grouped_prefabs = {}
     for prefab in prefabs_in_stage:
         prefab_id = prefab['prefab_id']
+
+        # Получаем информацию о префабе, чтобы узнать организацию
+        prefab_response = requests.get(f'{DJANGO_API_URL}prefabs/{prefab_id}/')
+        if prefab_response.status_code != 200:
+            continue
+
+        prefab_data = prefab_response.json()
+        if prefab_data['organization_id'] != user_organization_id:
+            continue
+
         if prefab_id not in grouped_prefabs:
             grouped_prefabs[prefab_id] = {
                 'quantity': 0,
@@ -5799,6 +5849,8 @@ async def send_prefabs_in_stage(chat_id, context, stage):
         text=f"Префабы в выбранном статусе:",
         reply_markup=reply_markup
     )
+
+
 
 async def handle_refactor_prefab_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('refactor_prefab_count'):
@@ -7574,8 +7626,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     elif data.startswith('prefabin_stock_'):
         await query.message.delete()
-        prefabs_in_work_id = int(data.split('_')[-1])
-        context.user_data['selected_prefab_in_work_id'] = prefabs_in_work_id
+        prefab_id = int(data.split('_')[-1])
+        context.user_data['selected_prefab_id'] = prefab_id
         context.user_data['expecting_montage_quantity'] = True
         await query.message.reply_text(
             "Введите количество префабов для отгрузки на монтаж:"
