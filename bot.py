@@ -75,6 +75,17 @@ async def welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def choose_organization(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
 
+    # Удаление кнопок у предыдущего сообщения бота
+    if 'main_menu_message_id' in context.user_data:
+        try:
+
+            await context.bot.delete_message(
+                chat_id=update.message.chat.id,
+                message_id=context.user_data['main_menu_message_id']
+            )
+        except:
+            pass
+
     # Получаем список организаций
     response = requests.get(f'{DJANGO_API_URL}organizations/')
     if response.status_code == 200:
@@ -106,10 +117,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     password = context.args[0] if context.args else None
 
+    # Удаление кнопок у предыдущего сообщения бота
+    if 'main_menu_message_id' in context.user_data:
+        try:
+
+            await context.bot.delete_message(
+                chat_id=update.message.chat.id,
+                message_id=context.user_data['main_menu_message_id']
+            )
+        except:
+            pass  # Если возникнет ошибка при редактировании сообщения, игнорируем её
+
     context.user_data['stage'] = None
     reset_user_states(context)
     response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
-
 
     if response.status_code == 404:
         if str(password).lower() == 'secret_password':
@@ -122,10 +143,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             context.user_data['organization_id'] = 3  # Устанавливаем организацию Босу
             await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
             context.user_data['stage'] = 'get_full_name_boss'
-
-        # elif str(password).lower() == 'test_front_section':
-        #     await update.message.reply_text('Привет, не авторизованный бобр')
-        #     context.user_data['stage'] = 'test_front_section'
 
         elif str(password).startswith('baseinfo_'):
             context.user_data['params'] = password.split('_')[1:]  # Сохраняем параметры для дальнейшего использования
@@ -158,7 +175,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 requests.put(f'{DJANGO_API_URL}users/{user_id}/', json=user_data)
                 await update.message.reply_text('Пожалуйста, представьтесь. Введите ваше ФИО:')
                 context.user_data['stage'] = 'get_full_name_boss'
-
 
             else:
                 await update.message.reply_text('Пожалуйста, введите пароль для авторизации:')
@@ -333,11 +349,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             response = requests.get(f'{DJANGO_API_URL}organizations/')
             if response.status_code == 200:
                 organizations = response.json()
-                filtered_organizations = [org for org in organizations if org['id'] != 3]
-                keyboard = [
-                    [InlineKeyboardButton(org['organization'], callback_data=f'org_{org["id"]}')] for org in filtered_organizations
-                ]
+
+                # Исключаем организацию с id = 3
+                filtered_organizations = [org for org in organizations if org['organization'] != "БОС"]
+                # Сортируем организации по алфавиту
+                filtered_organizations.sort(key=lambda org: org['organization'])
+                # Создание кнопок в две колонки
+                keyboard = []
+                for i in range(0, len(filtered_organizations), 2):
+                    row = [
+                        InlineKeyboardButton(filtered_organizations[i]['organization'],
+                                             callback_data=f'org_{filtered_organizations[i]["id"]}')
+                    ]
+                    if i + 1 < len(filtered_organizations):
+                        row.append(InlineKeyboardButton(filtered_organizations[i + 1]['organization'],
+                                                        callback_data=f'org_{filtered_organizations[i + 1]["id"]}'))
+                    keyboard.append(row)
+
                 reply_markup = InlineKeyboardMarkup(keyboard)
+
                 await update.message.reply_text('Выберите вашу организацию:', reply_markup=reply_markup)
                 context.user_data['stage'] = 'choose_organization'
             else:
@@ -362,9 +392,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             response = requests.get(f'{DJANGO_API_URL}objects/')
             if response.status_code == 200:
                 objects = response.json()
-                keyboard = [
-                    [InlineKeyboardButton(obj['name'], callback_data=f'object_{obj["id"]}')] for obj in objects
-                ]
+
+                if objects:
+                    # Сортируем объекты по имени в алфавитном порядке
+                    objects.sort(key=lambda obj: obj['name'])
+                    # Создаем клавиатуру с кнопками в две колонки
+                    keyboard = []
+                    for i in range(0, len(objects), 2):
+                        row = [
+                            InlineKeyboardButton(objects[i]['name'], callback_data=f'object_{objects[i]["id"]}')
+                        ]
+                        if i + 1 < len(objects):
+                            row.append(InlineKeyboardButton(objects[i + 1]['name'],
+                                                            callback_data=f'object_{objects[i + 1]["id"]}'))
+                        keyboard.append(row)
+
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+
+
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.message.reply_text('Выберите ваш объект:', reply_markup=reply_markup)
                 context.user_data['stage'] = 'choose_object'
@@ -704,6 +750,7 @@ def reset_user_states(context):
     context.user_data['expecting_new_status_quantity'] = False
     context.user_data['refactor_prefab_count'] = False
     context.user_data['expecting_new_status_prefab'] = False
+    context.user_data['stage'] = None
 
 async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name: str, organization_id: int) -> None:
     if not organization_id:
@@ -714,7 +761,6 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         return
 
     reset_user_states(context)
-    # Получаем информацию об организации по ID
     response = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
     if response.status_code == 200:
         organization_data = response.json()
@@ -726,7 +772,6 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         is_general_contractor = False
         is_factory = False
 
-    # Если пользователь - генеральный подрядчик, получить его объект
     if is_general_contractor:
         user_response = requests.get(f'{DJANGO_API_URL}users/chat/{chat_id}/')
         if user_response.status_code == 200:
@@ -746,13 +791,12 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
     else:
         object_name = ''
 
-    # Формируем клавиатуру на основе типа пользователя
     if is_general_contractor:
         keyboard = [
             [InlineKeyboardButton("\U0001F4C4 Фронт работ", callback_data='frontbutton')],
             [InlineKeyboardButton("\U0001F477 Просмотреть численность", callback_data='view_workforce')],
             [InlineKeyboardButton("📐 Просмотреть объем", callback_data='view_volume')],
-            [InlineKeyboardButton("Префабы", callback_data='prefabsoptionlist')],
+            [InlineKeyboardButton("⚒️ Префабы", callback_data='prefabsoptionlist')],
             [InlineKeyboardButton("🔄 Сменить объект", callback_data='changeobject')],
             [InlineKeyboardButton("📞 Тех. поддержка", callback_data='support')]
         ]
@@ -785,7 +829,6 @@ async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name:
         reply_markup=reply_markup
     )
     context.user_data['main_menu_message_id'] = message.message_id
-
 
 async def show_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, front_id: int) -> None:
     await query.message.delete()
@@ -898,6 +941,8 @@ async def list_accept_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await update.callback_query.message.reply_text("Выберите фронт для принятия:", reply_markup=reply_markup)
             else:
                 await update.callback_query.message.reply_text("Нет фронтов для принятия.")
+                await send_main_menu(update.callback_query.message.chat.id, context, user_data['full_name'], user_data['organization_id'])
+
         else:
             await update.callback_query.message.reply_text("Ошибка при получении фронтов.")
     else:
@@ -928,6 +973,7 @@ async def choose_work_type(query: Update, context: ContextTypes.DEFAULT_TYPE, ob
                         keyboard = [
                             [InlineKeyboardButton(work['name'], callback_data=f'work_{work["id"]}')] for work in work_types
                         ]
+                        keyboard.append([InlineKeyboardButton("Назад", callback_data='front_menu')])
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
                         context.user_data['object_id'] = object_id
@@ -949,6 +995,7 @@ async def choose_block_section(query: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard = [
             [InlineKeyboardButton(block['name'], callback_data=f'block_{block["id"]}')] for block in block_sections
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='front_menu')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
         context.user_data['work_type_id'] = work_type_id
@@ -962,10 +1009,22 @@ async def choose_floor(query: Update, context: ContextTypes.DEFAULT_TYPE, block_
     response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
     if response.status_code == 200:
         block_section = response.json()
+        number_of_floors_bottom = block_section['number_of_floors_bottom']
         number_of_floors = block_section['number_of_floors']
-        keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'floor_{i}')] for i in
-                    range(-2, number_of_floors + 1)]
+
+        # Генерация кнопок этажей в две колонки, исключая 0
+        keyboard = []
+        for i in range(number_of_floors_bottom, number_of_floors + 1):
+            if i == 0:
+                continue
+            if len(keyboard) == 0 or len(keyboard[-1]) == 2:
+                keyboard.append([InlineKeyboardButton(f'{i} этаж', callback_data=f'floor_{i}')])
+            else:
+                keyboard[-1].append(InlineKeyboardButton(f'{i} этаж', callback_data=f'floor_{i}'))
+
+        # Добавление кнопки кровли
         keyboard.append([InlineKeyboardButton('Кровля', callback_data='floor_roof')])
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='front_menu')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
         context.user_data['block_section_id'] = block_section_id
@@ -1095,11 +1154,11 @@ async def handle_transfer_confirmation(query: Update, context: ContextTypes.DEFA
     else:
         await query.message.delete()
         user_id = query.from_user.id
-        response = requests.get(f'{DJANGO_API_URL}users/{user_id}/')
+        response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
         if response.status_code == 200:
             user_data = response.json()
             full_name = user_data.get('full_name', 'Пользователь')
-            organization_id = user_data.get('organization', None)
+            organization_id = user_data.get('organization_id', None)
             if organization_id:
                 await query.message.reply_text('Передача отменена.', reply_markup=reply_markup_kb_main)
                 await send_main_menu(query.message.chat.id, context, full_name, organization_id)
@@ -1252,6 +1311,12 @@ async def finalize_photo_upload_prefab_in_work(update: Update, context: ContextT
             return
 
     await update.message.reply_text("Фотографии успешно загружены ко всем префабам.")
+    user_data = requests.get(f'{DJANGO_API_URL}users/chat/{update.message.chat.id}/').json()
+    full_name = user_data.get('full_name', 'Пользователь')
+    organization_id = user_data.get('organization_id', None)
+    await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+
+
     context.user_data['photos'] = []
 
     # Отправка уведомлений после загрузки фотографий
@@ -1454,14 +1519,14 @@ async def view_fronts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         return
 
                 keyboard.append([InlineKeyboardButton("↻ Обновить", callback_data='view_fronts')])
-                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='frontbutton')])
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.callback_query.message.reply_text("Список текущих фронтов работ:", reply_markup=reply_markup)
             else:
                 keyboard = []
                 keyboard.append([InlineKeyboardButton("↻ Обновить", callback_data='view_fronts')])
-                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='frontbutton')])
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.callback_query.message.reply_text("Нет доступных фронтов работ со статусом 'передано'.", reply_markup=reply_markup)
@@ -1618,7 +1683,7 @@ async def view_fronts_in_process(update: Update, context: ContextTypes.DEFAULT_T
                         return
 
                 keyboard.append([InlineKeyboardButton("↻ Обновить", callback_data='fronts_in_process')])
-                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='frontbutton')])
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.callback_query.message.reply_text("Список текущих фронтов в работе:",
@@ -1626,7 +1691,7 @@ async def view_fronts_in_process(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 keyboard = []
                 keyboard.append([InlineKeyboardButton("↻ Обновить", callback_data='fronts_in_process')])
-                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='frontbutton')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.callback_query.message.reply_text("Нет доступных фронтов работ со статусом 'в работе'.", reply_markup=reply_markup)
         else:
@@ -2785,6 +2850,8 @@ async def choose_existing_front(query: Update, context: ContextTypes.DEFAULT_TYP
         callback_data = f"existing_front_{front['id']}"
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
+    keyboard.append([InlineKeyboardButton("Назад", callback_data='front_menu')])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text('Выберите фронт для продолжения передачи:', reply_markup=reply_markup)
     context.user_data['stage'] = 'choose_existing_front'
@@ -3031,6 +3098,14 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
 
                 print(update_response.json())
                 if update_response.status_code == 200:
+                    if 'refactor_message_id' in context.user_data:
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=update.message.chat.id,
+                                message_id=context.user_data['refactor_message_id']
+                            )
+                        except:
+                            pass
                     await update.message.reply_text('Численность успешно обновлена.')
 
                     # Получение данных для вызова send_main_menu
@@ -3181,6 +3256,15 @@ async def handle_delete_workforce(update: Update, context: ContextTypes.DEFAULT_
             asyncio.create_task(delete_workforce_in_google_sheets(workforce_id))
         else:
             await update.message.reply_text('Ошибка при удалении записи из базы данных.')
+
+        user_id = update.message.from_user.id
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
+        if user_response.status_code == 200:
+            user_data = user_response.json()
+            full_name = user_data.get('full_name', 'Пользователь')
+            organization_id = user_data.get('organization_id', None)
+            await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+
     except Exception as e:
         await update.message.reply_text(f'Ошибка: {str(e)}')
 
@@ -3367,6 +3451,14 @@ async def handle_new_volume_count(update: Update, context: ContextTypes.DEFAULT_
 
             print(update_response.json())
             if update_response.status_code == 200:
+                if 'refactor_message_id' in context.user_data:
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=update.message.chat.id,
+                            message_id=context.user_data['refactor_message_id']
+                        )
+                    except:
+                        pass
                 await update.message.reply_text('Объем успешно обновлен.')
 
                 # Получение данных для вызова send_main_menu
@@ -3411,6 +3503,15 @@ async def handle_delete_volume(update: Update, context: ContextTypes.DEFAULT_TYP
             await delete_volume_in_google_sheets(volume_id)
         else:
             await update.message.reply_text('Ошибка при удалении записи из базы данных.')
+
+        user_id = update.message.from_user.id
+        user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
+        if user_response.status_code == 200:
+            user_data = user_response.json()
+            full_name = user_data.get('full_name', 'Пользователь')
+            organization_id = user_data.get('organization_id', None)
+            await send_main_menu(update.message.chat.id, context, full_name, organization_id)
+
     except Exception as e:
         await update.message.reply_text(f'Ошибка: {str(e)}')
 
@@ -3538,6 +3639,7 @@ async def send_prefab_subtypes(chat_id, context: ContextTypes.DEFAULT_TYPE, pref
             [InlineKeyboardButton(prefab_subtype['name'], callback_data=f"prefab_subtype_{prefab_subtype['id']}")]
             for prefab_subtype in prefab_subtypes
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='fact_production')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(
             chat_id=chat_id,
@@ -4257,6 +4359,7 @@ async def send_prefabs_list(chat_id, context: ContextTypes.DEFAULT_TYPE, status:
                     chat_id=chat_id,
                     text="Нет префабов с указанным статусом."
                 )
+
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4277,7 +4380,7 @@ async def send_warehouses_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
         if warehouses:
             keyboard = [[InlineKeyboardButton(warehouse['name'], callback_data=f'select_warehouse_{warehouse["id"]}')]
                         for warehouse in warehouses]
-            keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='prefabsoptionlist')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4709,7 +4812,7 @@ async def send_prefabs_list_for_shipment(chat_id, context: ContextTypes.DEFAULT_
                     keyboard.append([InlineKeyboardButton(button_text, callback_data=f"prefabinstock_{data['id']}")])
 
             if keyboard:
-                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='placespace')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await context.bot.send_message(
                     chat_id=chat_id,
@@ -4876,7 +4979,7 @@ async def send_warehouses_list_montage(chat_id, context: ContextTypes.DEFAULT_TY
         if warehouses:
             keyboard = [[InlineKeyboardButton(warehouse['name'], callback_data=f'selectwarehouse_for_montage_{warehouse["id"]}')]
                         for warehouse in warehouses]
-            keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='prefabsoptionlist')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4901,7 +5004,7 @@ async def send_prefab_types_montage(chat_id, context: ContextTypes.DEFAULT_TYPE)
         if prefab_types:
             keyboard = [[InlineKeyboardButton(prefab_type['name'], callback_data=f'select_prefab_type_for_montage_{prefab_type["id"]}')]
                         for prefab_type in prefab_types]
-            keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='montage')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4927,6 +5030,7 @@ async def send_prefab_subtypes_montage(chat_id, context: ContextTypes.DEFAULT_TY
         if prefab_subtypes:
             keyboard = [[InlineKeyboardButton(subtype['name'], callback_data=f'select_prefab_subtype_for_montage_{subtype["id"]}')]
                         for subtype in prefab_subtypes]
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='montage')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -4988,6 +5092,7 @@ async def send_prefabs_list_montage(chat_id, context: ContextTypes.DEFAULT_TYPE)
                                 )
 
             if prefabs_in_stock:
+                prefabs_in_stock.append([InlineKeyboardButton("Назад", callback_data='montage')])
                 reply_markup = InlineKeyboardMarkup(prefabs_in_stock)
                 await context.bot.send_message(
                     chat_id=chat_id,
@@ -5036,40 +5141,12 @@ async def handle_montage_quantity(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Недостаточное количество на складе. Попробуйте снова.")
         return
 
-    if remaining_quantity == 0:
-        # Обновляем статус текущего префаба
-        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'status': 'montage'})
-        if response.status_code != 200:
-            await update.message.reply_text("Ошибка при обновлении статуса. Попробуйте снова.")
-            return
+    context.user_data['quantity'] = quantity
+    context.user_data['remaining_quantity'] = remaining_quantity
+    context.user_data['prefab'] = prefab
 
-        context.user_data['new_prefab_in_work_id'] = prefabs_in_work_id
-    else:
-        # Обновляем количество текущего префаба
-        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'quantity': remaining_quantity})
-        if response.status_code != 200:
-            await update.message.reply_text("Ошибка при обновлении количества. Попробуйте снова.")
-            return
-
-        # Создаем новый префаб для монтажа
-        new_prefab_data = prefab.copy()
-        new_prefab_data['quantity'] = quantity
-        new_prefab_data['status'] = 'montage'
-        new_prefab_data.pop('id')  # Удаляем id чтобы создать новый объект
-        new_prefab_data['block_section_id'] = None  # Пустое значение для секции
-        new_prefab_data['floor'] = None  # Пустое значение для этажа
-
-        response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
-        if response.status_code != 201:
-            await update.message.reply_text("Ошибка при создании нового префаба для монтажа. Попробуйте снова.")
-            return
-
-        new_prefab = response.json()
-        context.user_data['new_prefab_in_work_id'] = new_prefab['id']
-
-    await update.message.reply_text("Количество обновлено. Теперь выберите секцию.")
+    await update.message.reply_text("Теперь выберите секцию:")
     await send_block_sections_list(update.message.chat.id, context)
-
 
 async def send_block_sections_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
     user_chat_id = chat_id
@@ -5125,14 +5202,22 @@ async def send_floors_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
     if response.status_code == 200:
         block_section = response.json()
         if block_section and block_section['number_of_floors']:
-            keyboard = [
-                [InlineKeyboardButton(f"Этаж -2", callback_data=f'select_floor_-2')],
-                [InlineKeyboardButton(f"Этаж -1", callback_data=f'select_floor_-1')],
-                [InlineKeyboardButton(f"Этаж 0", callback_data=f'select_floor_0')]
-            ] + [[InlineKeyboardButton(f"Этаж {i}", callback_data=f'select_floor_{i}')]
-                 for i in range(1, block_section['number_of_floors'] + 1)] + [
-                [InlineKeyboardButton("Кровля", callback_data=f'select_floor_roof')]
-            ]
+            number_of_floors_bottom = block_section['number_of_floors_bottom']
+            number_of_floors = block_section['number_of_floors']
+
+            # Генерация кнопок этажей в две колонки, исключая 0
+            keyboard = []
+            for i in range(number_of_floors_bottom, number_of_floors + 1):
+                if i == 0:
+                    continue
+                if len(keyboard) == 0 or len(keyboard[-1]) == 2:
+                    keyboard.append([InlineKeyboardButton(f'Этаж {i}', callback_data=f'select_floor_{i}')])
+                else:
+                    keyboard[-1].append(InlineKeyboardButton(f'Этаж {i}', callback_data=f'select_floor_{i}'))
+
+            # Добавление кнопки кровли
+            keyboard.append([InlineKeyboardButton('Кровля', callback_data='select_floor_roof')])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -5150,6 +5235,57 @@ async def send_floors_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
             text="Ошибка при получении списка этажей. Попробуйте снова."
         )
 
+async def handle_select_block_section(query: Update, context: ContextTypes.DEFAULT_TYPE):
+    await query.message.delete()
+    block_section_id = int(query.data.split('_')[-1])
+    context.user_data['selected_block_section_id'] = block_section_id
+    await send_floors_list(query.message.chat.id, context)
+
+async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE):
+    await query.message.delete()
+    floor = query.data.split('_')[-1]
+    context.user_data['selected_floor'] = floor
+
+    # Получаем данные для обновления или создания нового префаба
+    prefabs_in_work_id = context.user_data['selected_prefab_in_work_id']
+    quantity = context.user_data['quantity']
+    remaining_quantity = context.user_data['remaining_quantity']
+    prefab = context.user_data['prefab']
+    block_section_id = context.user_data['selected_block_section_id']
+
+    if remaining_quantity == 0:
+        # Обновляем статус текущего префаба
+        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'status': 'montage'})
+        if response.status_code != 200:
+            await query.message.reply_text("Ошибка при обновлении статуса. Попробуйте снова.")
+            return
+
+        context.user_data['new_prefab_in_work_id'] = prefabs_in_work_id
+    else:
+        # Обновляем количество текущего префаба
+        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefabs_in_work_id}', json={'quantity': remaining_quantity})
+        if response.status_code != 200:
+            await query.message.reply_text("Ошибка при обновлении количества. Попробуйте снова.")
+            return
+
+        # Создаем новый префаб для монтажа
+        new_prefab_data = prefab.copy()
+        new_prefab_data['quantity'] = quantity
+        new_prefab_data['status'] = 'montage'
+        new_prefab_data.pop('id')  # Удаляем id чтобы создать новый объект
+        new_prefab_data['block_section_id'] = block_section_id  # Устанавливаем выбранную секцию
+        new_prefab_data['floor'] = floor  # Устанавливаем выбранный этаж
+
+        response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
+        if response.status_code != 201:
+            await query.message.reply_text("Ошибка при создании нового префаба для монтажа. Попробуйте снова.")
+            return
+
+        new_prefab = response.json()
+        context.user_data['new_prefab_in_work_id'] = new_prefab['id']
+
+    await query.message.reply_text("Количество обновлено. Прикрепите фотографии для монтажа:")
+    context.user_data['stage'] = 'attach_photos_prefab_in_montage'
 
 
 async def handle_prefab_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5190,16 +5326,22 @@ async def handle_prefab_photo_upload(update: Update, context: ContextTypes.DEFAU
 
 async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prefab_in_work_id = context.user_data.get('new_prefab_in_work_id')
-    photos = context.user_data.get('photos', [])
+    new_photos = context.user_data.get('photos', [])
 
-    update_data = {'photos': photos}
+    # Получаем существующие фотографии
+    response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/{prefab_in_work_id}')
+    if response.status_code != 200:
+        await update.message.reply_text('Ошибка при получении существующих фотографий. Попробуйте снова.')
+        return
+
+    prefab = response.json()
+    existing_photos = prefab.get('photos', [])
+    all_photos = existing_photos + new_photos
+
+    update_data = {'photos': all_photos}
     response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab_in_work_id}', json=update_data)
     if response.status_code == 200:
-        reply_keyboard_main = [
-            [KeyboardButton("/info")],
-            [KeyboardButton("/start")],
-            [KeyboardButton("/choice")],
-        ]
+
         reply_markup_kb_main = ReplyKeyboardMarkup(reply_keyboard_main, resize_keyboard=True, one_time_keyboard=False)
 
         await update.message.reply_text("\U00002705 Фотографии успешно загружены. Монтаж завершён.",
@@ -5207,9 +5349,6 @@ async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_T
 
         context.user_data['stage'] = None
         context.user_data['photos'] = []
-
-
-
 
         # Получаем данные пользователя для вызова send_main_menu
         user_id = context.user_data.get('user_id')
@@ -5665,6 +5804,7 @@ async def handle_refactor_prefab_quantity(update: Update, context: ContextTypes.
     if context.user_data.get('refactor_prefab_count'):
         try:
             quantity = int(update.message.text)
+            context.user_data['quantity'] = quantity
             selected_prefab_id = context.user_data['selected_prefab_id']
 
             all_prefabs_in_work = requests.get(f'{DJANGO_API_URL}prefabs_in_work/').json()
@@ -5721,10 +5861,21 @@ async def handle_refactor_prefab_quantity(update: Update, context: ContextTypes.
             context.user_data['expecting_new_status_prefab'] = True
 
             keyboard = [
+                [InlineKeyboardButton("Тендер", callback_data='new_status_tender')],
                 [InlineKeyboardButton("Производство", callback_data='new_status_production')],
                 [InlineKeyboardButton("СГП", callback_data='new_status_sgp')],
                 [InlineKeyboardButton("Отгрузка", callback_data='new_status_shipment')]
             ]
+
+            if 'refactor_message_id' in context.user_data:
+                try:
+                    await context.bot.delete_message(
+                        chat_id=update.message.chat.id,
+                        message_id=context.user_data['refactor_message_id']
+                    )
+                except:
+                    pass
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text("Выберите новый статус для префаба:", reply_markup=reply_markup)
         except ValueError:
@@ -5739,6 +5890,46 @@ async def handle_new_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     selected_status = query.data.split('_')[2]
     updated_prefabs = context.user_data['updated_prefabs']
+
+    # Если выбран статус "Тендер", просто вычитаем количество и возвращаемся в главное меню
+    if selected_status == 'tender':
+        print(context.user_data)
+        update_quantity_remaining = context.user_data['quantity']
+        for prefab_id in updated_prefabs:
+            prefab_data = requests.get(f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}/').json()
+            current_quantity = prefab_data['quantity']
+
+            if current_quantity <= update_quantity_remaining:
+                # Удаляем запись
+                delete_response = requests.delete(f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}/')
+                if delete_response.status_code != 200:
+                    await query.message.reply_text(f'Ошибка при удалении префаба ID {prefab_id}. Попробуйте снова.')
+                    return
+                update_quantity_remaining -= current_quantity
+            else:
+                # Обновляем запись с новым количеством
+                new_quantity = current_quantity - update_quantity_remaining
+                update_response = requests.patch(
+                    f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}/',
+                    json={'quantity': new_quantity}
+                )
+                if update_response.status_code != 200:
+                    await query.message.reply_text(f'Ошибка при обновлении количества префаба ID {prefab_id}. Попробуйте снова.')
+                    return
+                update_quantity_remaining = 0
+
+            if update_quantity_remaining <= 0:
+                break
+
+        await query.message.reply_text(f"\U00002705 Введенное количество успешно вычтено как тендер.")
+        context.user_data['expecting_new_status_prefab'] = False
+
+        # Вызываем send_main_menu
+        user_data = requests.get(f'{DJANGO_API_URL}users/chat/{query.message.chat.id}/').json()
+        full_name = user_data.get('full_name', 'Пользователь')
+        organization_id = user_data.get('organization_id', None)
+        await send_main_menu(query.message.chat.id, context, full_name, organization_id)
+        return
 
     # Инициализируем переменные для хранения информации о типе и подвиде префабов
     prefab_type_name = 'Неизвестный тип'
@@ -5999,7 +6190,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await handle_transfer_confirmation(query, context, confirmed=True)
 
     elif data == 'confirm_no':
-        await query.message.delete()  # Удаление предыдущего сообщения
+        # await query.message.delete()  # Удаление предыдущего сообщения
         await handle_transfer_confirmation(query, context, confirmed=False)
 
     elif data == 'front_menu':
@@ -6022,6 +6213,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие для фронта:', reply_markup=reply_markup)
+
     elif data == 'workforce_menu':
         await query.message.delete()
         keyboard = [
@@ -6088,19 +6280,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
 
     elif data.startswith('obj_'):
+        user_id = query.from_user.id  # Получаем user_id из данных обновления
         object_id = int(data.split('_')[1])
 
-        # Получаем фронты, где пользователь является отправителем и статус "in_process"
-        response = requests.get(f'{DJANGO_API_URL}fronttransfers/?sender_chat_id={user_id}&status=in_process')
+        # Получаем все фронты, где статус "in_process"
+        response = requests.get(f'{DJANGO_API_URL}fronttransfers/?status=in_process')
         if response.status_code == 200:
             fronts = response.json()
-            user_has_fronts_in_object = any(front['object_id'] == object_id for front in fronts)
+            # Фильтруем фронты, где пользователь является отправителем
+            user_fronts = [front for front in fronts if front['sender_chat_id'] == user_id]
+            user_has_fronts_in_object = any(front['object_id'] == object_id for front in user_fronts)
             if user_has_fronts_in_object:
-                await choose_existing_front(query, context, fronts, object_id)
+                await choose_existing_front(query, context, user_fronts, object_id)
             else:
                 await choose_work_type(query, context, object_id)
         else:
             await query.message.reply_text('Ошибка при получении списка фронтов. Попробуйте снова.')
+
 
     elif data.startswith('existing_front_'):
         front_id = int(data.split('_')[2])
@@ -6207,14 +6403,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if response_objects.status_code == 200:
                 objects = response_objects.json()
 
-                # Фильтруем объекты по user_object_ids
-                filtered_objects = [obj for obj in objects if obj['id'] == user_object_id]
-                print(objects)
-                if filtered_objects:
-                    keyboard = [
-                        [InlineKeyboardButton(obj['name'], callback_data=f'issue_obj_{obj["id"]}')] for obj in filtered_objects
-                    ]
-                    keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                if objects:
+                    # Сортируем объекты по имени в алфавитном порядке
+                    objects.sort(key=lambda obj: obj['name'])
+                    # Создаем клавиатуру с кнопками в две колонки
+                    keyboard = []
+                    for i in range(0, len(objects), 2):
+                        row = [
+                            InlineKeyboardButton(objects[i]['name'], callback_data=f'issue_obj_{objects[i]["id"]}')
+                        ]
+                        if i + 1 < len(objects):
+                            row.append(InlineKeyboardButton(objects[i + 1]['name'],
+                                                            callback_data=f'issue_obj_{objects[i + 1]["id"]}'))
+                        keyboard.append(row)
+
+
+                    keyboard.append([InlineKeyboardButton("Назад", callback_data='frontbutton')])
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
                     context.user_data['stage'] = 'issue_choose_object'
@@ -6235,15 +6439,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}organizations/')
         if response.status_code == 200:
             organizations = response.json()
-            # Фильтруем организации, у которых в object_ids есть выбранный object_id
-            filtered_organizations = [
-                org for org in organizations if org.get('object_ids') and object_id in org['object_ids']
-            ]
-            if filtered_organizations:
-                keyboard = [
-                    [InlineKeyboardButton(org['organization'], callback_data=f'issue_org_{org["id"]}')] for org in
-                    filtered_organizations if org['organization'] != "БОС"
+
+            # Исключаем организацию с id = 3
+            filtered_organizations = [org for org in organizations if org['organization'] != "БОС"]
+            # Сортируем организации по алфавиту
+            filtered_organizations.sort(key=lambda org: org['organization'])
+            # Создание кнопок в две колонки
+            keyboard = []
+            for i in range(0, len(filtered_organizations), 2):
+                row = [
+                    InlineKeyboardButton(filtered_organizations[i]['organization'],
+                                         callback_data=f'issue_org_{filtered_organizations[i]["id"]}')
                 ]
+                if i + 1 < len(filtered_organizations):
+                    row.append(InlineKeyboardButton(filtered_organizations[i + 1]['organization'],
+                                                    callback_data=f'issue_org_{filtered_organizations[i + 1]["id"]}'))
+                keyboard.append(row)
+
+
+            if filtered_organizations:
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='issue_front')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите организацию:', reply_markup=reply_markup)
                 context.user_data['stage'] = 'issue_choose_organization'
@@ -6271,7 +6486,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     [InlineKeyboardButton(user['full_name'], callback_data=f'issue_user_{user["chat_id"]}')] for user in
                     filtered_users
                 ]
-
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='issue_front')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите пользователя:', reply_markup=reply_markup)
                 context.user_data['stage'] = 'issue_choose_user'
@@ -6302,6 +6517,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             [InlineKeyboardButton(work['name'], callback_data=f'issue_work_{work["id"]}')] for work in
                             work_types
                         ]
+                        keyboard.append([InlineKeyboardButton("Назад", callback_data='issue_front')])
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
                         context.user_data['stage'] = 'issue_choose_work_type'
@@ -6323,13 +6539,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 [InlineKeyboardButton(block['name'], callback_data=f'issue_block_{block["id"]}')] for block in
                 block_sections
             ]
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='issue_front')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
             context.user_data['stage'] = 'issue_choose_block_section'
 
         else:
             await query.message.reply_text('Ошибка при получении списка блоков или секций. Попробуйте снова.')
-
 
     elif data.startswith('issue_block_'):
         await query.message.delete()  # Удаление предыдущего сообщения
@@ -6339,10 +6555,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if response.status_code == 200:
             block_section = response.json()
+            number_of_floors_bottom = block_section['number_of_floors_bottom']
             number_of_floors = block_section['number_of_floors']
-            keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'issue_floor_{i}')] for i in
-                        range(-2, number_of_floors + 1)]
+
+            # Генерация кнопок этажей в две колонки, исключая 0
+            keyboard = []
+            for i in range(number_of_floors_bottom, number_of_floors + 1):
+                if i == 0:
+                    continue
+                if len(keyboard) == 0 or len(keyboard[-1]) == 2:
+                    keyboard.append([InlineKeyboardButton(f'{i} этаж', callback_data=f'issue_floor_{i}')])
+                else:
+                    keyboard[-1].append(InlineKeyboardButton(f'{i} этаж', callback_data=f'issue_floor_{i}'))
+
+            # Добавление кнопки кровли
             keyboard.append([InlineKeyboardButton('Кровля', callback_data='issue_floor_roof')])
+
+            # Добавление кнопки "Назад"
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='issue_front')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
             context.user_data['stage'] = 'issue_choose_floor'
@@ -6526,6 +6756,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     [InlineKeyboardButton(work['name'], callback_data=f'workforce_work_{work["id"]}')] for work in
                     work_types
                 ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
             else:
@@ -6541,10 +6772,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
         if response.status_code == 200:
             block_section = response.json()
+            number_of_floors_bottom = block_section['number_of_floors_bottom']
             number_of_floors = block_section['number_of_floors']
-            keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'workforce_floor_{i}')] for i in
-                        range(-2, number_of_floors + 1)]
+
+            # Генерация кнопок этажей в две колонки, исключая 0
+            keyboard = []
+            for i in range(number_of_floors_bottom, number_of_floors + 1):
+                if i == 0:
+                    continue
+                if len(keyboard) == 0 or len(keyboard[-1]) == 2:
+                    keyboard.append([InlineKeyboardButton(f'{i} этаж', callback_data=f'workforce_floor_{i}')])
+                else:
+                    keyboard[-1].append(InlineKeyboardButton(f'{i} этаж', callback_data=f'workforce_floor_{i}'))
+
+            # Добавление кнопки кровли и кнопки "Назад"
             keyboard.append([InlineKeyboardButton('Кровля', callback_data='workforce_floor_roof')])
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
 
@@ -6555,7 +6799,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         floor = data.split('_')[2]
         context.user_data['workforce_floor'] = floor
-        await query.message.reply_text('Введите численность:')
+
+        keyboard = []
+        keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.reply_text('Введите численность:', reply_markup=reply_markup)
         context.user_data['expecting_workforce_count'] = True
 
 
@@ -6576,6 +6825,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     [InlineKeyboardButton(block['name'], callback_data=f'workforce_block_{block["id"]}')] for block in
                     block_sections
                 ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
             else:
@@ -6637,11 +6887,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
                     button_text = f"{wf['workforce_count']} - {work_type_name} - {block_section_name} - Этаж {wf['floor']}"
                     buttons.append([InlineKeyboardButton(button_text, callback_data=f'refactor_{wf["id"]}')])
-
+                buttons.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
                 reply_markup = InlineKeyboardMarkup(buttons)
                 await query.message.reply_text('Выберите численность для редактирования:', reply_markup=reply_markup)
             else:
                 await query.message.reply_text('Сегодня нет численностей для редактирования.')
+
+                user_id = update.effective_user.id
+                user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
+                if user_response.status_code == 200:
+                    user_data = user_response.json()
+                    await send_main_menu(query.message.chat.id, context, user_data['full_name'],
+                                         user_data['organization_id'])
+                else:
+                    await query.message.reply_text('Ошибка при получении данных пользователя.')
+
         else:
             await query.message.reply_text('Ошибка при получении списка численностей. Попробуйте снова.')
 
@@ -6668,11 +6928,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         requests.get(f'{DJANGO_API_URL}blocksections/{wf["block_section_id"]}/').json()['name']
                     button_text = f"{wf['workforce_count']} - {work_type_name} - {block_section_name} - Этаж {wf['floor']}"
                     buttons.append([InlineKeyboardButton(button_text, callback_data=f'delete_workforce_{wf["id"]}')])
-
+                buttons.append([InlineKeyboardButton("Назад", callback_data='workforce_menu')])
                 reply_markup = InlineKeyboardMarkup(buttons)
                 await query.message.reply_text('Выберите запись численности для удаления:', reply_markup=reply_markup)
             else:
                 await query.message.reply_text('Сегодня не было передано численностей.')
+
+                user_id = update.effective_user.id
+                user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
+                if user_response.status_code == 200:
+                    user_data = user_response.json()
+                    await send_main_menu(query.message.chat.id, context, user_data['full_name'],
+                                         user_data['organization_id'])
+                else:
+                    await query.message.reply_text('Ошибка при получении данных пользователя.')
+
         else:
             await query.message.reply_text('Ошибка при получении данных о численности.')
 
@@ -6681,8 +6951,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         workforce_id = int(data.split('_')[1])
         context.user_data['workforce_id_to_refactor'] = workforce_id
-        await query.message.reply_text('Введите новую численность:')
+        keyboard = []
+        keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message = await query.message.reply_text('Введите новую численность:', reply_markup=reply_markup)
         context.user_data['expecting_new_workforce_count'] = True
+        context.user_data['refactor_message_id'] = message.message_id
 
 
     elif data == 'view_workforce':
@@ -6782,6 +7056,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton(month, callback_data=f'month_{i * 4 + j + 1}') for j, month in enumerate(row)]
             for i, row in enumerate(months)
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='view_workforce')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите месяц:', reply_markup=reply_markup)
 
@@ -6798,6 +7073,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
              range(i, min(i + 7, days_in_month + 1))]
             for i in range(1, days_in_month + 1, 7)
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='view_workforce')])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.message.reply_text('Выберите день:', reply_markup=reply_markup)
@@ -6836,6 +7112,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     [InlineKeyboardButton(work['name'], callback_data=f'volume_work_{work["id"]}')] for work in
                     work_types
                 ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='volume_transfer')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите вид работ:', reply_markup=reply_markup)
             else:
@@ -6850,12 +7127,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}blocksections/{block_section_id}/')
         if response.status_code == 200:
             block_section = response.json()
+            number_of_floors_bottom = block_section['number_of_floors_bottom']
             number_of_floors = block_section['number_of_floors']
 
-            keyboard = [[InlineKeyboardButton(f'{i} этаж', callback_data=f'volume_floor_{i}')] for i in
-                        range(-2, number_of_floors + 1)]
-            # keyboard.insert(0, [InlineKeyboardButton('Пропустить', callback_data='volume_floor_None')])
+            # Генерация кнопок этажей в две колонки, исключая 0
+            keyboard = []
+            for i in range(number_of_floors_bottom, number_of_floors + 1):
+                if i == 0:
+                    continue
+                if len(keyboard) == 0 or len(keyboard[-1]) == 2:
+                    keyboard.append([InlineKeyboardButton(f'{i} этаж', callback_data=f'volume_floor_{i}')])
+                else:
+                    keyboard[-1].append(InlineKeyboardButton(f'{i} этаж', callback_data=f'volume_floor_{i}'))
+
+            # Добавление кнопки кровли и кнопки "Назад"
             keyboard.append([InlineKeyboardButton('Кровля', callback_data='volume_floor_roof')])
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='volume_transfer')])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text('Выберите этаж:', reply_markup=reply_markup)
         else:
@@ -6865,7 +7153,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         floor = data.split('_')[2]
         context.user_data['volume_floor'] = floor
-        await query.message.reply_text('Введите объем в м³:')
+
+        keyboard = []
+        keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.reply_text('Введите объем в м³:', reply_markup=reply_markup)
         context.user_data['expecting_volume_count'] = True
 
     elif data.startswith('volume_work_'):
@@ -6885,6 +7178,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     [InlineKeyboardButton(block['name'], callback_data=f'volume_block_{block["id"]}')] for block in
                     block_sections
                 ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='volume_transfer')])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.message.reply_text('Выберите блок или секцию:', reply_markup=reply_markup)
             else:
@@ -6946,6 +7240,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     button_text = f"{vol['volume']} - {work_type_name} - {block_section_name} - Этаж {vol['floor']}"
                     buttons.append([InlineKeyboardButton(button_text, callback_data=f'refactorvolume_{vol["id"]}')])
 
+                buttons.append([InlineKeyboardButton("Назад", callback_data='volume_menu')])
+
                 reply_markup = InlineKeyboardMarkup(buttons)
                 await query.message.reply_text('Выберите объем для редактирования:', reply_markup=reply_markup)
             else:
@@ -6978,10 +7274,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     button_text = f"{vol['volume']} - {work_type_name} - {block_section_name} {floor_text}"
                     buttons.append([InlineKeyboardButton(button_text, callback_data=f'delete_volume_{vol["id"]}')])
 
+                buttons.append([InlineKeyboardButton("Назад", callback_data='volume_menu')])
+
                 reply_markup = InlineKeyboardMarkup(buttons)
                 await query.message.reply_text('Выберите запись объема для удаления:', reply_markup=reply_markup)
             else:
                 await query.message.reply_text('Сегодня не было передано объемов.')
+                user_id = update.effective_user.id
+                user_response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}')
+                if user_response.status_code == 200:
+                    user_data = user_response.json()
+                    await send_main_menu(query.message.chat.id, context, user_data['full_name'],
+                                         user_data['organization_id'])
+                else:
+                    await query.message.reply_text('Ошибка при получении данных пользователя.')
+
         else:
             await query.message.reply_text('Ошибка при получении данных об объеме.')
 
@@ -6989,8 +7296,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.delete()
         volume_id = int(data.split('_')[1])
         context.user_data['volume_id_to_refactor'] = volume_id
-        await query.message.reply_text('Введите новый объем:')
+
+        keyboard = []
+        keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        message = await query.message.reply_text('Введите новый объем:', reply_markup=reply_markup)
         context.user_data['expecting_new_volume_count'] = True
+        context.user_data['refactor_message_id'] = message.message_id
 
     elif data == 'view_volume':
         await query.message.delete()
@@ -7020,6 +7333,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton(month, callback_data=f'volumemonth_{i * 4 + j + 1}') for j, month in enumerate(row)]
             for i, row in enumerate(months)
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='view_volume')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите месяц:', reply_markup=reply_markup)
 
@@ -7035,6 +7349,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
              range(i, min(i + 7, days_in_month + 1))]
             for i in range(1, days_in_month + 1, 7)
         ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='choose_volumemonth')])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.message.reply_text('Выберите день:', reply_markup=reply_markup)
@@ -7167,9 +7482,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif data == 'prefabsoptionlist':
         await query.message.delete()
         keyboard = [
-            [InlineKeyboardButton("Просмотр завода", callback_data='view_prefabs')],
-            [InlineKeyboardButton("Площадка", callback_data='placespace')],
-            [InlineKeyboardButton("Монтаж", callback_data='montage')],
+            [InlineKeyboardButton("🏭 Просмотр завода", callback_data='view_prefabs')],
+            [InlineKeyboardButton("📦 Площадка", callback_data='placespace')],
+            [InlineKeyboardButton("🔩 Монтаж", callback_data='montage')],
             [InlineKeyboardButton("Назад", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -7180,10 +7495,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif data == 'view_prefabs':
         await query.message.delete()
         keyboard = [
-            [InlineKeyboardButton("В производстве", callback_data='view_prefabs_production')],
-            [InlineKeyboardButton("СГП", callback_data='view_prefabs_sgp')],
-            [InlineKeyboardButton("Отгружены", callback_data='view_prefabs_shipped')],
-            [InlineKeyboardButton("Назад", callback_data='main_menu')]
+            [InlineKeyboardButton("🏭 В производстве", callback_data='view_prefabs_production')],
+            [InlineKeyboardButton("📋 СГП", callback_data='view_prefabs_sgp')],
+            [InlineKeyboardButton("🚚 Отгружены", callback_data='view_prefabs_shipped')],
+            [InlineKeyboardButton("Назад", callback_data='prefabsoptionlist')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите категорию префабов:', reply_markup=reply_markup)
@@ -7268,32 +7583,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
     elif data.startswith('select_block_section_'):
-        await query.message.delete()
-        block_section_id = int(data.split('_')[-1])
-        context.user_data['selected_block_section_id'] = block_section_id
-        await send_floors_list(query.message.chat.id, context)
+        await handle_select_block_section(query, context)
 
     elif data.startswith('select_floor_'):
-        await query.message.delete()
-        floor = data.split('_')[-1]
-        context.user_data['selected_floor'] = floor
-
-        # Обновляем префаб с выбранной секцией и этажом
-        prefab_in_work_id = context.user_data['new_prefab_in_work_id']
-        block_section_id = context.user_data['selected_block_section_id']
-
-        update_data = {
-            'block_section_id': block_section_id,
-            'floor': floor
-        }
-
-        print(update_data)
-        response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab_in_work_id}', json=update_data)
-        if response.status_code == 200:
-            context.user_data['stage'] = 'attach_photos_prefab_in_montage'
-            await query.message.reply_text("Прикрепите фотографии для монтажа:")
-        else:
-            await query.message.reply_text("Ошибка при обновлении данных префаба. Попробуйте снова.")
+        await handle_select_floor(query, context)
 
 
     elif data.startswith('select_prefab_subtype_'):
@@ -7308,9 +7601,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     elif data == 'support':
         await query.message.delete()
+
+        keyboard = []
+        keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         context.user_data['expecting_prefab_quantity'] = False
         context.user_data['stage'] = 'support_question'
-        await query.message.reply_text('Пожалуйста, введите ваш вопрос для тех. поддержки:')
+        await query.message.reply_text('Пожалуйста, введите ваш вопрос для тех. поддержки:', reply_markup=reply_markup)
 
     elif data.startswith('ticket_'):
         ticket_id = int(data.split('_')[1])
@@ -7356,7 +7654,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             selected_prefab_id = int(data.split('_')[1])
             context.user_data['selected_prefab_id'] = selected_prefab_id
             context.user_data['refactor_prefab_count'] = True
-            await query.message.reply_text("Введите количество префаба для изменения:")
+
+            keyboard = []
+            keyboard.append([InlineKeyboardButton("\U0000274C Отмена", callback_data='main_menu')])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            message = await query.message.reply_text("Введите количество префаба для изменения:", reply_markup=reply_markup)
+            context.user_data['refactor_message_id'] = message.message_id
         except (IndexError, ValueError):
             await query.message.reply_text("Некорректный формат данных.")
 
@@ -7380,7 +7684,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     # Вставьте свой токен
-    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
+    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
 
     application.add_handler(CommandHandler("info", welcome_message))
     application.add_handler(CommandHandler("choice", choose_organization))
