@@ -85,6 +85,7 @@ class BlockSection(Base):
     id = Column(Integer, primary_key=True, index=True)
     object_id = Column(Integer, ForeignKey("objects.id"))
     name = Column(String, index=True)
+    number_of_floors_bottom = Column(Integer, nullable=True, default=-2)
     number_of_floors = Column(Integer)
 
     object = relationship("Object", back_populates="block_sections")
@@ -367,6 +368,7 @@ class BlockSectionBase(BaseModel):
     object_id: int
     name: str
     number_of_floors: int
+    number_of_floors_bottom: int
 
 
 class BlockSectionCreate(BlockSectionBase):
@@ -1462,47 +1464,71 @@ from sqladmin import Admin, ModelView
 admin = Admin(app, engine)
 
 # Создаем ModelView для каждой модели
+# Создаем ModelView для каждой модели
 class OrganizationAdmin(ModelView, model=Organization):
     column_list = [Organization.id, Organization.organization, Organization.is_general_contractor, Organization.work_types_ids, Organization.object_ids, Organization.factory]
+    column_sortable_list = [Organization.id, Organization.organization]
+    column_searchable_list = [Organization.organization]
 
 class UserAdmin(ModelView, model=User):
     column_list = [User.id, User.chat_id, User.full_name, User.is_authorized, User.organization_id, User.object_id]
+    column_sortable_list = [User.id, User.chat_id, User.full_name, User.organization_id]
+    column_searchable_list = [User.full_name, User.chat_id]
 
 class WorkTypeAdmin(ModelView, model=WorkType):
     column_list = [WorkType.id, WorkType.name]
+    column_sortable_list = [WorkType.id, WorkType.name]
+    column_searchable_list = [WorkType.name]
 
 class ObjectAdmin(ModelView, model=Object):
     column_list = [Object.id, Object.name, Object.work_types_ids]
+    column_sortable_list = [Object.id, Object.name]
+    column_searchable_list = [Object.name]
 
 class BlockSectionAdmin(ModelView, model=BlockSection):
     column_list = [BlockSection.id, BlockSection.object_id, BlockSection.name, BlockSection.number_of_floors]
+    column_sortable_list = [BlockSection.id, BlockSection.object_id, BlockSection.name]
+    column_searchable_list = [BlockSection.name]
 
 class FrontTransferAdmin(ModelView, model=FrontTransfer):
     column_list = [FrontTransfer.id, FrontTransfer.sender_id, FrontTransfer.object_id, FrontTransfer.work_type_id, FrontTransfer.block_section_id, FrontTransfer.floor, FrontTransfer.status, FrontTransfer.photo1, FrontTransfer.photo2, FrontTransfer.photo3, FrontTransfer.photo4, FrontTransfer.photo5, FrontTransfer.receiver_id, FrontTransfer.remarks, FrontTransfer.next_work_type_id, FrontTransfer.boss_id, FrontTransfer.created_at, FrontTransfer.approval_at, FrontTransfer.photo_ids, FrontTransfer.sender_chat_id]
+    column_sortable_list = [FrontTransfer.id, FrontTransfer.sender_id, FrontTransfer.object_id, FrontTransfer.work_type_id, FrontTransfer.block_section_id, FrontTransfer.floor, FrontTransfer.status]
 
 class FrontWorkforceAdmin(ModelView, model=FrontWorkforce):
     column_list = [FrontWorkforce.id, FrontWorkforce.object_id, FrontWorkforce.block_section_id, FrontWorkforce.floor, FrontWorkforce.work_type_id, FrontWorkforce.organization_id, FrontWorkforce.workforce_count, FrontWorkforce.date, FrontWorkforce.user_id]
+    column_sortable_list = [FrontWorkforce.id, FrontWorkforce.object_id, FrontWorkforce.block_section_id, FrontWorkforce.floor, FrontWorkforce.work_type_id, FrontWorkforce.organization_id, FrontWorkforce.workforce_count, FrontWorkforce.date]
 
 class VolumeAdmin(ModelView, model=Volume):
     column_list = [Volume.id, Volume.work_type_id, Volume.volume, Volume.user_id, Volume.date, Volume.object_id, Volume.organization_id, Volume.block_section_id, Volume.floor]
+    column_sortable_list = [Volume.id, Volume.work_type_id, Volume.volume, Volume.user_id, Volume.date, Volume.object_id, Volume.organization_id, Volume.block_section_id, Volume.floor]
 
 class PrefabTypeAdmin(ModelView, model=PrefabType):
     column_list = [PrefabType.id, PrefabType.name]
+    column_sortable_list = [PrefabType.id, PrefabType.name]
+    column_searchable_list = [PrefabType.name]
 
 class PrefabAdmin(ModelView, model=Prefab):
     column_list = [Prefab.id, Prefab.prefab_type_id, Prefab.prefab_subtype_id, Prefab.planned_delivery_date, Prefab.actual_delivery_date, Prefab.deficit, Prefab.quantity, Prefab.object_id, Prefab.organization_id, Prefab.comment]
+    column_sortable_list = [Prefab.id, Prefab.prefab_type_id, Prefab.prefab_subtype_id, Prefab.planned_delivery_date, Prefab.actual_delivery_date, Prefab.quantity, Prefab.object_id, Prefab.organization_id]
 
 class PrefabSubtypeAdmin(ModelView, model=PrefabSubtype):
     column_list = [PrefabSubtype.id, PrefabSubtype.name, PrefabSubtype.prefabtype_id]
+    column_sortable_list = [PrefabSubtype.id, PrefabSubtype.name, PrefabSubtype.prefabtype_id]
+    column_searchable_list = [PrefabSubtype.name]
 
 class PrefabsInWorkAdmin(ModelView, model=PrefabsInWork):
     column_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.warehouse_id, PrefabsInWork.photos, PrefabsInWork.comments, PrefabsInWork.block_section_id, PrefabsInWork.floor]
+    column_sortable_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.warehouse_id, PrefabsInWork.block_section_id, PrefabsInWork.floor]
 
 class WarehouseAdmin(ModelView, model=Warehouse):
     column_list = [Warehouse.id, Warehouse.name]
+    column_sortable_list = [Warehouse.id, Warehouse.name]
+    column_searchable_list = [Warehouse.name]
 
 class SupportTicketAdmin(ModelView, model=SupportTicket):
     column_list = [SupportTicket.id, SupportTicket.sender_id, SupportTicket.question, SupportTicket.answer, SupportTicket.respondent_id, SupportTicket.status, SupportTicket.photo_ids, SupportTicket.created_at]
+    column_sortable_list = [SupportTicket.id, SupportTicket.sender_id, SupportTicket.respondent_id, SupportTicket.status, SupportTicket.created_at]
+
 
 # Добавляем ModelView в админ панель
 admin.add_view(OrganizationAdmin)
