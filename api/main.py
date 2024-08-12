@@ -564,6 +564,7 @@ class PrefabsInWorkBase(BaseModel):
     comments: Optional[str] = None
     block_section_id: Optional[int] = None
     floor: Optional[str] = None
+    montage_date: Optional[datetime] = None
 
 class PrefabsInWorkCreate(PrefabsInWorkBase):
     pass
@@ -579,6 +580,7 @@ class PrefabsInWorkUpdate(BaseModel):
     comments: Optional[str] = None
     block_section_id: Optional[int] = None
     floor: Optional[str] = None
+    montage_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True
