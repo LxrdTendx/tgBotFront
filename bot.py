@@ -4907,12 +4907,14 @@ async def send_to_google_sheets_warehouse(prefab_data):
         data = {
             "action": "warehouse",
             "A": prefab_data['id'],
-            "B": object_info['name'],
+            "B": prefab_subtype_info['name'],
             "C": prefab_type_info['name'],
-            "D": prefab_subtype_info['name'],
+            "D": current_date,
             "E": warehouse_info['name'],
-            "F": current_date,
-            "G": prefab_data['quantity']
+            "F": object_info['name'],
+            "G": None,
+            "H": prefab_data['quantity'],
+
         }
 
         async with session.post(WEBHOOK_URL, json=data) as response:
@@ -5360,16 +5362,18 @@ async def send_to_google_sheets_montage(prefab_data):
         current_date = datetime.now().strftime("%d.%m.%Y")
 
         data = {
+
             "action": "montage",
             "A": prefab_data['id'],
             "B": object_info['name'],
-            "C": prefab_type_info['name'],
-            "D": prefab_subtype_info['name'],
-            "E": warehouse_info['name'],
-            "F": current_date,
-            "G": prefab_data['quantity'],
-            "H": block_section_info['name'],
-            "I": prefab_data['floor']
+            "C": current_date,
+            "D": block_section_info['name'],
+            "E": prefab_data['floor'],
+            "F": prefab_type_info['name'],
+            "G": prefab_subtype_info['name'],
+            "H": prefab_data['quantity'],
+            "I": None,
+
         }
 
         async with session.post(WEBHOOK_URL, json=data) as response:
@@ -5419,7 +5423,7 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
             updated_prefab = response.json()
             asyncio.create_task(send_to_google_sheets_montage(updated_prefab))
 
-    await query.message.reply_text("Количество обновлено. Прикрепите фотографии для монтажа:")
+    await query.message.reply_text("Количество на складе обновлено. Теперь добавьте фотографии (до 10) и нажмите /done для завершения.")
     context.user_data['stage'] = 'attach_photos_prefab_in_montage'
 
 
