@@ -5397,7 +5397,8 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
                 'prefab_id': prefab_in_work['prefab_id'],
                 'quantity': remaining_stock_quantity,
                 'status': 'stock',
-                'warehouse_id': prefab_in_work['warehouse_id']
+                'warehouse_id': prefab_in_work['warehouse_id'],
+                'montage_date': datetime.utcnow().isoformat(),
             }
             response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
             if response.status_code != 201:
