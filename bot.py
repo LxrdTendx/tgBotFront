@@ -6202,102 +6202,42 @@ STATUS_TRANSLATION = {
 STATUS_ORDER = ['production', 'sgp', 'shipment', 'stock', 'montage']
 
 async def send_prefab_summary(chat_id, context: ContextTypes.DEFAULT_TYPE, object_id: int):
-    # Получаем данные пользователя
-    user_response = requests.get(f'{DJANGO_API_URL}users/chat/{chat_id}/')
-    if user_response.status_code != 200:
+    # Получаем сводку по префабам с помощью нового эндпоинта
+    summary_response = requests.get(f'{DJANGO_API_URL}prefab_summary/{chat_id}/{object_id}')
+
+    if summary_response.status_code != 200:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Ошибка при получении данных пользователя."
+            text="Ошибка при получении сводки по префабам."
         )
         return
 
-    user_data = user_response.json()
-    organization_id = user_data.get('organization_id')
+    summary_data = summary_response.json().get("summary", [])
 
-    # Получаем имя объекта
-    object_response = requests.get(f'{DJANGO_API_URL}objects/{object_id}/')
-    if object_response.status_code == 200:
-        object_name = object_response.json().get('name', 'Неизвестный объект')
-    else:
-        object_name = 'Неизвестный объект'
-
-    # Получаем все префабы
-    prefabs_response = requests.get(f'{DJANGO_API_URL}prefabs/')
-    if prefabs_response.status_code != 200:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="Ошибка при получении данных префабов. Попробуйте снова."
-        )
-        return
-
-    prefabs = prefabs_response.json()
-    filtered_prefabs = [prefab for prefab in prefabs if prefab['object_id'] == object_id and prefab['organization_id'] == organization_id]
-
-    if not filtered_prefabs:
+    if not summary_data:
         await context.bot.send_message(
             chat_id=chat_id,
             text="Нет данных по префабам для выбранного объекта."
         )
         return
 
-    # Получаем данные о статусах префабов в работе
-    prefabs_in_work_response = requests.get(f'{DJANGO_API_URL}prefabs_in_work/')
-    if prefabs_in_work_response.status_code != 200:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="Ошибка при получении данных префабов в работе. Попробуйте снова."
+    # Формируем текст сообщения для отправки пользователю
+    summary_text = f"📊 Сводка префабов по объекту {summary_data[0]['object_name']}:\n\n"
+    for prefab in summary_data:
+        summary_text += (
+            f"📋 {prefab['prefab_subtype_name']} (количество по тендеру: {prefab['prefab_quantity']}):\n"
+            f"  {STATUS_TRANSLATION.get('production', 'production')}: {prefab['production_quantity']}\n"
+            f"  {STATUS_TRANSLATION.get('sgp', 'sgp')}: {prefab['sgp_quantity']}\n"
+            f"  {STATUS_TRANSLATION.get('shipment', 'shipment')}: {prefab['shipment_quantity']}\n"
+            "\n"
         )
-        return
 
-    prefabs_in_work = prefabs_in_work_response.json()
-    filtered_prefabs_in_work = [piw for piw in prefabs_in_work if piw['prefab_id'] in [prefab['id'] for prefab in filtered_prefabs]]
-
-    summary = {}
-    for piw in filtered_prefabs_in_work:
-        prefab_id = piw['prefab_id']
-        status = piw['status']
-        quantity = piw['quantity']
-
-        if prefab_id not in summary:
-            summary[prefab_id] = {}
-
-        if status not in summary[prefab_id]:
-            summary[prefab_id][status] = 0
-
-        summary[prefab_id][status] += quantity
-
-    summary_text = f"📊 Сводка префабов по объекту {object_name}:\n\n"
-    sorted_prefab_ids = sorted(summary.keys(), key=lambda pid: requests.get(f'{DJANGO_API_URL}prefab_subtypes/{next(p["prefab_subtype_id"] for p in filtered_prefabs if p["id"] == pid)}').json().get('name', ''))
-
-    for prefab_id in sorted_prefab_ids:
-        prefab = next((p for p in filtered_prefabs if p['id'] == prefab_id), None)
-        if prefab:
-            prefab_subtype_response = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab["prefab_subtype_id"]}/')
-            if prefab_subtype_response.status_code == 200:
-                prefab_subtype_name = prefab_subtype_response.json().get('name', 'Неизвестный подтип префаба')
-            else:
-                prefab_subtype_name = 'Неизвестный подтип префаба'
-
-            total_quantity = prefab['quantity']
-            summary_text += f"📋 {prefab_subtype_name} (количество по тендеру: {total_quantity}):\n"
-
-            # Суммирование статусов "shipment", "stock" и "montage"
-            shipment_quantity = summary[prefab_id].get('shipment', 0) + summary[prefab_id].get('stock', 0) + summary[prefab_id].get('montage', 0)
-
-            # Отображение остальных статусов
-            for status in ['production', 'sgp']:
-                translated_status = STATUS_TRANSLATION.get(status, status)
-                quantity = summary[prefab_id].get(status, 0)
-                summary_text += f"  {translated_status}: {quantity}\n"
-
-            # Отображение суммированного статуса
-            summary_text += f"  {STATUS_TRANSLATION['shipment']}: {shipment_quantity}\n"
-            summary_text += "\n"
-
+    # Отправляем сформированный текст пользователю
     await context.bot.send_message(
         chat_id=chat_id,
         text=summary_text
     )
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query

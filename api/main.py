@@ -1458,6 +1458,67 @@ def update_support_ticket(ticket_id: int, ticket: SupportTicketUpdate, db: Sessi
     db.refresh(db_ticket)
     return db_ticket
 
+@app.get("/prefab_summary/{chat_id}/{object_id}")
+def get_prefab_summary(chat_id: Union[str, int], object_id: int, db: Session = Depends(get_db)):
+    query = text("""
+    SELECT 
+        u.chat_id,
+        u.full_name,
+        o.name AS object_name,
+        pt.name AS prefab_type_name,
+        pst.name AS prefab_subtype_name,
+        p.quantity AS prefab_quantity,
+        COALESCE(SUM(CASE WHEN piw.status = 'production' THEN piw.quantity ELSE 0 END), 0) AS production_quantity,
+        COALESCE(SUM(CASE WHEN piw.status = 'sgp' THEN piw.quantity ELSE 0 END), 0) AS sgp_quantity,
+        COALESCE(SUM(CASE WHEN piw.status IN ('shipment', 'stock', 'montage') THEN piw.quantity ELSE 0 END), 0) AS shipment_quantity
+    FROM 
+        users u
+    JOIN 
+        organizations org ON u.organization_id = org.id
+    JOIN 
+        objects o ON o.id = :object_id
+    JOIN 
+        prefabs p ON p.object_id = o.id AND p.organization_id = org.id
+    JOIN 
+        prefab_types pt ON p.prefab_type_id = pt.id
+    JOIN 
+        prefab_subtypes pst ON p.prefab_subtype_id = pst.id
+    LEFT JOIN 
+        prefabs_in_work piw ON piw.prefab_id = p.id
+    WHERE 
+        u.chat_id = :chat_id
+    GROUP BY 
+        u.chat_id, 
+        u.full_name, 
+        o.name, 
+        pt.name, 
+        pst.name, 
+        p.quantity
+    ORDER BY 
+        pst.name ASC;
+    """)
+
+    result = db.execute(query, {"chat_id": chat_id, "object_id": object_id}).fetchall()
+
+    if not result:
+        raise HTTPException(status_code=404, detail="No data found for the specified user and object.")
+
+    # Форматируем результат для удобного отображения
+    summary = []
+    for row in result:
+        summary.append({
+            "chat_id": row.chat_id,
+            "full_name": row.full_name,
+            "object_name": row.object_name,
+            "prefab_type_name": row.prefab_type_name,
+            "prefab_subtype_name": row.prefab_subtype_name,
+            "prefab_quantity": row.prefab_quantity,
+            "production_quantity": row.production_quantity,
+            "sgp_quantity": row.sgp_quantity,
+            "shipment_quantity": row.shipment_quantity,
+        })
+
+    return {"summary": summary}
 
 
 #АДМИН ПАНЕЛЬ
@@ -1466,7 +1527,6 @@ from sqladmin import Admin, ModelView
 # Настройка SQLAlchemy Admin
 admin = Admin(app, engine)
 
-# Создаем ModelView для каждой модели
 # Создаем ModelView для каждой модели
 class OrganizationAdmin(ModelView, model=Organization):
     column_list = [Organization.id, Organization.organization, Organization.is_general_contractor, Organization.work_types_ids, Organization.object_ids, Organization.factory]
@@ -1548,6 +1608,8 @@ admin.add_view(PrefabSubtypeAdmin)
 admin.add_view(PrefabsInWorkAdmin)
 admin.add_view(WarehouseAdmin)
 admin.add_view(SupportTicketAdmin)
+
+
 
 
 # Запуск FastAPI
