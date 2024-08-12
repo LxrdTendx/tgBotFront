@@ -5406,7 +5406,7 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
 
             # Обновляем количество и статус текущего префаба
-            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'quantity': prefab['quantity'], 'status': 'montage', 'block_section_id': block_section_id, 'floor': floor})
+            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'quantity': prefab['quantity'], 'status': 'montage', 'block_section_id': block_section_id, 'floor': floor, 'montage_date': datetime.utcnow().isoformat()})
             if response.status_code != 200:
                 await query.message.reply_text("Ошибка при обновлении статуса и количества. Попробуйте снова.")
                 return
