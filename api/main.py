@@ -85,7 +85,7 @@ class BlockSection(Base):
     id = Column(Integer, primary_key=True, index=True)
     object_id = Column(Integer, ForeignKey("objects.id"))
     name = Column(String, index=True)
-    number_of_floors_bottom = Column(Integer, nullable=True, default=-2)
+    number_of_floors_bottom = Column(Integer, nullable=True, default=0)
     number_of_floors = Column(Integer)
 
     object = relationship("Object", back_populates="block_sections")
@@ -233,6 +233,7 @@ class PrefabsInWork(Base):
     comments = Column(String, nullable=True)  # Поле для комментариев
     block_section_id = Column(Integer, ForeignKey("blocksections.id"), nullable=True)  # Добавлено поле block_section_id
     floor = Column(String, nullable=True)  # Добавлено поле floor
+    montage_date = Column(DateTime, nullable=True)  # Новое поле "дата монтажа"
 
     prefab = relationship("Prefab")
     warehouse = relationship("Warehouse", back_populates="prefabs_in_work")
@@ -1486,7 +1487,7 @@ class ObjectAdmin(ModelView, model=Object):
     column_searchable_list = [Object.name]
 
 class BlockSectionAdmin(ModelView, model=BlockSection):
-    column_list = [BlockSection.id, BlockSection.object_id, BlockSection.name, BlockSection.number_of_floors]
+    column_list = [BlockSection.id, BlockSection.object_id, BlockSection.name, BlockSection.number_of_floors, BlockSection.number_of_floors_bottom]
     column_sortable_list = [BlockSection.id, BlockSection.object_id, BlockSection.name]
     column_searchable_list = [BlockSection.name]
 
