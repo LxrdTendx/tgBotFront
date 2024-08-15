@@ -25,6 +25,12 @@ from datetime import datetime
 import asyncio
 from collections import defaultdict
 
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+
+
 # Включаем логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -5406,6 +5412,7 @@ async def send_to_google_sheets_montage(prefab_data):
             "G": prefab_subtype_info['name'],
             "H": prefab_data['quantity'],
             "I": None,
+            "J": warehouse_info['name']
 
         }
 
@@ -6273,6 +6280,8 @@ async def send_prefab_summary(chat_id, context: ContextTypes.DEFAULT_TYPE, objec
         chat_id=chat_id,
         text=summary_text
     )
+
+
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -7627,11 +7636,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("🏭 Просмотр завода", callback_data='view_prefabs')],
             [InlineKeyboardButton("📦 Площадка", callback_data='placespace')],
             [InlineKeyboardButton("🔩 Монтаж", callback_data='montage')],
+            [InlineKeyboardButton("📄 Отчет за сегодня", callback_data='generate_report_today')],
             [InlineKeyboardButton("Назад", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие с префабами:', reply_markup=reply_markup)
-
 
 
     elif data == 'view_prefabs':
