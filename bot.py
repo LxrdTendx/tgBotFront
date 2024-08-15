@@ -767,6 +767,7 @@ def reset_user_states(context):
     context.user_data['expecting_new_status_prefab'] = False
     context.user_data['stage'] = None
     context.user_data['expecting_montage_quantity'] = False
+    context.user_data['expecting_stock_quantity'] = False
 
 
 async def send_main_menu(chat_id, context: ContextTypes.DEFAULT_TYPE, full_name: str, organization_id: int) -> None:
@@ -6427,6 +6428,128 @@ async def report_today_pdf(chat_id, context):
 
             print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
+async def report_specific_day_pdf(chat_id, context, selected_date):
+    async with aiohttp.ClientSession() as session:
+        # Получение object_id по chat_id
+        async with session.get(f"{API_URL}/users/chat/{chat_id}") as response:
+            if response.status != 200:
+                await context.bot.send_message(chat_id, 'Ошибка при получении данных пользователя. Попробуйте позже.')
+                return
+
+            user_data = await response.json()
+            object_id = user_data.get('object_id')
+
+            if not object_id:
+                await context.bot.send_message(chat_id,
+                                               'Не удалось получить object_id. Пожалуйста, проверьте данные пользователя.')
+                return
+
+            # Подключение к базе данных
+            conn = psycopg2.connect(DATABASE_URL)
+            cur = conn.cursor()
+
+            # Создание пустого Excel файла
+            random_number = random.randint(10000000, 99999999)
+            excel_file = f'report_{random_number}.xlsx'
+
+            with ExcelWriter(excel_file) as writer:
+                ### Статусы
+                query_statuses = f"SELECT * FROM get_statuses_report('{selected_date}', {object_id})"
+                df_statuses = pd.read_sql(query_statuses, conn)
+                df_statuses.to_excel(writer, index=False, sheet_name='Статусы')
+
+                ### Площадка
+                query_warehouse = f"SELECT * FROM get_warehouse_report('{selected_date}', {object_id})"
+                df_warehouse = pd.read_sql(query_warehouse, conn)
+                df_warehouse.to_excel(writer, index=False, sheet_name='Площадка')
+
+                ### Монтаж
+                query_montage = f"SELECT * FROM get_montage_report('{selected_date}', {object_id})"
+                df_montage = pd.read_sql(query_montage, conn)
+                df_montage.to_excel(writer, index=False, sheet_name='Монтаж')
+
+            # Закрытие соединения с базой данных
+            conn.close()
+
+            print(f"Данные успешно сохранены в файл {excel_file}")
+
+            # Преобразование Excel в PDF аналогично `report_today_pdf`
+            await convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, context, selected_date)
+
+
+async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, context, selected_date):
+    # Преобразование Excel в Word с горизонтальной ориентацией
+    doc = Document()
+    doc.add_heading(f'Отчет {selected_date}', 0)
+
+    # Установка альбомной ориентации для всех разделов документа
+    section = doc.sections[-1]
+    section.page_width = Inches(11.69)  # A4 landscape width
+    section.page_height = Inches(8.27)  # A4 landscape height
+    section.orientation = 1  # Альбомная ориентация
+
+    # Чтение каждого листа из Excel-файла и добавление его в Word-документ
+    excel_workbook = load_workbook(excel_file)
+    for sheet_name in excel_workbook.sheetnames:
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        doc.add_heading(sheet_name, level=1)
+
+        # Преобразование DataFrame в таблицу Word
+        table = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
+
+        # Добавление заголовков
+        for j, col in enumerate(df.columns):
+            cell = table.cell(0, j)
+            cell.text = col
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(10)  # Установка меньшего размера шрифта
+
+        # Заполнение таблицы данными
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                cell = table.cell(i + 1, j)
+                cell.text = str(df.iat[i, j]) if df.iat[i, j] != "" else ""
+                cell.paragraphs[0].alignment = 1  # Выравнивание по центру
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(10)  # Установка меньшего размера шрифта
+
+        # Добавление границ к таблице
+        table.style = 'Table Grid'
+
+        doc.add_paragraph()  # Разделение между таблицами
+
+    # Сохранение Word-документа
+    word_file = f'report_{random_number}.docx'
+    doc.save(word_file)
+    print(f"Данные успешно сохранены в файл {word_file}")
+
+    # Конвертация в PDF с помощью LibreOffice
+    pdf_file = f'temp_{random_number}.pdf'
+
+    if platform.system() == "Windows":
+        libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+    else:
+        libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
+
+    # Конвертация документа Word в PDF
+    subprocess.run([libreoffice_path, '--headless', '--convert-to', 'pdf', word_file])
+
+    # Переименовать результат в 'temp_<random_number>.pdf'
+    os.rename(word_file.replace('.docx', '.pdf'), pdf_file)
+
+    # Отправка PDF пользователю
+    with open(pdf_file, 'rb') as pdf_file_obj:
+        await context.bot.send_document(chat_id, pdf_file_obj)
+
+    # Удаление временных файлов
+    os.remove(excel_file)
+    os.remove(word_file)
+    os.remove(pdf_file)
+
+    print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -7781,10 +7904,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("📦 Площадка", callback_data='placespace')],
             [InlineKeyboardButton("🔩 Монтаж", callback_data='montage')],
             [InlineKeyboardButton("📄 Отчет за сегодня", callback_data='generate_report_today')],
+            [InlineKeyboardButton("📅 Отчет на определенный день", callback_data='generate_report_specific_day')],
             [InlineKeyboardButton("Назад", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие с префабами:', reply_markup=reply_markup)
+
+    elif data == 'generate_report_specific_day':
+        await query.message.delete()
+
+        # Разбиваем месяцы на три строки по четыре месяца в строке
+        months = [
+            ["Январь", "Февраль", "Март", "Апрель"],
+            ["Май", "Июнь", "Июль", "Август"],
+            ["Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+        ]
+
+        keyboard = [
+            [InlineKeyboardButton(month, callback_data=f'reportmonth_{i * 4 + j + 1}') for j, month in enumerate(row)]
+            for i, row in enumerate(months)
+        ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='prefabsoptionlist')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите месяц:', reply_markup=reply_markup)
+
+
+    elif data.startswith('reportmonth_'):
+        await query.message.delete()
+        month = int(data.split('_')[1])
+        context.user_data['selected_month'] = month
+        days_in_month = (datetime(2024, month % 12 + 1, 1) - timedelta(days=1)).day
+
+        # Разбиваем дни на строки по 7 дней в каждой строке
+        keyboard = [
+            [InlineKeyboardButton(str(day), callback_data=f'reportday_{day}') for day in
+             range(i, min(i + 7, days_in_month + 1))]
+            for i in range(1, days_in_month + 1, 7)
+        ]
+        keyboard.append([InlineKeyboardButton("Назад", callback_data='generate_report_specific_day')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.reply_text('Выберите день:', reply_markup=reply_markup)
+
+
+    elif data.startswith('reportday_'):
+        chat_id = query.message.chat.id
+        # Удаление кнопок и изменение текста на "Создание отчета, подождите..."
+
+        await query.message.edit_text("Создание отчета, подождите...", reply_markup=None)
+        day = int(data.split('_')[1])
+        month = context.user_data['selected_month']
+        selected_date = datetime(2024, month, day).strftime('%Y-%m-%d')
+
+        # Теперь можно использовать функцию для создания отчета, передав выбранную дату
+        await report_specific_day_pdf(chat_id=query.message.chat_id, context=context, selected_date=selected_date)
 
 
     elif data == 'generate_report_today':
