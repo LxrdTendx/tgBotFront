@@ -1,4 +1,8 @@
+import random
+
+import pandas as pd
 import telegram
+from sqlalchemy.dialects.postgresql import psycopg2
 from telegram.constants import ParseMode
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, \
     InputMediaPhoto
@@ -24,11 +28,14 @@ from docx.shared import Pt
 from datetime import datetime
 import asyncio
 from collections import defaultdict
-
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+import psycopg2
+import pandas as pd
+from pandas import ExcelWriter
+from docx import Document
+from docx.shared import Pt, Inches
+import subprocess
+import os
+import random
 
 
 # Включаем логирование
@@ -4908,6 +4915,14 @@ async def send_to_google_sheets_warehouse(prefab_data):
         prefab_subtype_info = await get_data_from_api(session, f"/prefab_subtypes/{prefab_info['prefab_subtype_id']}")
         warehouse_info = await get_data_from_api(session, f"/warehouses/{prefab_data['warehouse_id']}")
 
+
+
+        # Получение информации об организации
+        organization_id = prefab_info['organization_id']
+        organization_info = await get_data_from_api(session, f"/organizations/{organization_id}")
+        organization_name = organization_info['organization']
+
+
         # Используем текущую дату
         current_date = datetime.now().strftime("%d.%m.%Y")
 
@@ -4921,6 +4936,7 @@ async def send_to_google_sheets_warehouse(prefab_data):
             "F": object_info['name'],
             "G": None,
             "H": prefab_data['quantity'],
+            "I": organization_name
 
         }
 
@@ -5397,6 +5413,11 @@ async def send_to_google_sheets_montage(prefab_data):
         warehouse_info = await get_data_from_api(session, f"/warehouses/{prefab_data['warehouse_id']}")
         block_section_info = await get_data_from_api(session, f"/blocksections/{prefab_data['block_section_id']}")
 
+        # Получение информации об организации
+        organization_id = prefab_info['organization_id']
+        organization_info = await get_data_from_api(session, f"/organizations/{organization_id}")
+        organization_name = organization_info['organization']
+
         # Используем текущую дату
         current_date = datetime.now().strftime("%d.%m.%Y")
 
@@ -5412,7 +5433,8 @@ async def send_to_google_sheets_montage(prefab_data):
             "G": prefab_subtype_info['name'],
             "H": prefab_data['quantity'],
             "I": None,
-            "J": warehouse_info['name']
+            "J": warehouse_info['name'],
+            "K": organization_name
 
         }
 
@@ -5458,7 +5480,7 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
             updated_prefab = response.json()
             asyncio.create_task(send_to_google_sheets_montage(updated_prefab))
         else:
-            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'status': 'montage', 'block_section_id': block_section_id, 'floor': floor})
+            response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab["id"]}', json={'status': 'montage', 'block_section_id': block_section_id, 'floor': floor, 'montage_date': datetime.utcnow().isoformat()})
             if response.status_code != 200:
                 await query.message.reply_text("Ошибка при обновлении статуса. Попробуйте снова.")
                 return
@@ -6282,6 +6304,128 @@ async def send_prefab_summary(chat_id, context: ContextTypes.DEFAULT_TYPE, objec
     )
 
 
+API_URL = "http://127.0.0.1:8000"
+DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
+
+
+async def report_today_pdf(chat_id, context):
+    async with aiohttp.ClientSession() as session:
+        # Получение object_id по chat_id
+        async with session.get(f"{API_URL}/users/chat/{chat_id}") as response:
+            if response.status != 200:
+                await context.bot.send_message(chat_id, 'Ошибка при получении данных пользователя. Попробуйте позже.')
+                return
+
+            user_data = await response.json()
+            object_id = user_data.get('object_id')
+
+            if not object_id:
+                await context.bot.send_message(chat_id,
+                                               'Не удалось получить object_id. Пожалуйста, проверьте данные пользователя.')
+                return
+
+            selected_date = datetime.today().strftime('%Y-%m-%d')  # Текущая дата
+
+            # Подключение к базе данных
+            conn = psycopg2.connect(DATABASE_URL)
+            cur = conn.cursor()
+
+            # Создание пустого Excel файла
+            random_number = random.randint(10000000, 99999999)
+            excel_file = f'report_{random_number}.xlsx'
+
+            with ExcelWriter(excel_file) as writer:
+                ### Статусы
+                query_statuses = f"SELECT * FROM get_statuses_report('{selected_date}', {object_id})"
+                df_statuses = pd.read_sql(query_statuses, conn)
+                df_statuses.to_excel(writer, index=False, sheet_name='Статусы')
+
+                ### Площадка
+                query_warehouse = f"SELECT * FROM get_warehouse_report('{selected_date}', {object_id})"
+                df_warehouse = pd.read_sql(query_warehouse, conn)
+                df_warehouse.to_excel(writer, index=False, sheet_name='Площадка')
+
+                ### Монтаж
+                query_montage = f"SELECT * FROM get_montage_report('{selected_date}', {object_id})"
+                df_montage = pd.read_sql(query_montage, conn)
+                df_montage.to_excel(writer, index=False, sheet_name='Монтаж')
+
+            # Закрытие соединения с базой данных
+            conn.close()
+
+            print(f"Данные успешно сохранены в файл {excel_file}")
+
+            ### Преобразование Excel в Word с горизонтальной ориентацией
+            doc = Document()
+            doc.add_heading(f'Отчет за {selected_date}', 0)
+
+            # Установка альбомной ориентации для всех разделов документа
+            section = doc.sections[-1]
+            section.page_width = Inches(11.69)  # A4 landscape width
+            section.page_height = Inches(8.27)  # A4 landscape height
+            section.orientation = 1  # Альбомная ориентация
+
+            # Чтение каждого листа из Excel-файла и добавление его в Word-документ
+            for sheet_name in ['Статусы', 'Площадка', 'Монтаж']:
+                df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                doc.add_heading(sheet_name, level=1)
+
+                # Преобразование DataFrame в таблицу Word
+                table = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
+
+                # Добавление заголовков
+                for j, col in enumerate(df.columns):
+                    cell = table.cell(0, j)
+                    cell.text = col
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.bold = True
+                            run.font.size = Pt(10)  # Установка меньшего размера шрифта
+
+                # Заполнение таблицы данными
+                for i in range(df.shape[0]):
+                    for j in range(df.shape[1]):
+                        cell = table.cell(i + 1, j)
+                        cell.text = str(df.iat[i, j]) if df.iat[i, j] != "" else ""
+                        cell.paragraphs[0].alignment = 1  # Выравнивание по центру
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.size = Pt(10)  # Установка меньшего размера шрифта
+
+                # Добавление границ к таблице
+                table.style = 'Table Grid'
+
+                doc.add_paragraph()  # Разделение между таблицами
+
+            # Сохранение Word-документа
+            word_file = f'report_{random_number}.docx'
+            doc.save(word_file)
+            print(f"Данные успешно сохранены в файл {word_file}")
+
+            # Конвертация в PDF с помощью LibreOffice
+            pdf_file = f'temp_{random_number}.pdf'
+
+            if platform.system() == "Windows":
+                libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+            else:
+                libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
+
+
+            subprocess.run([libreoffice_path, '--headless', '--convert-to', 'pdf', word_file])
+
+            # Переименовать результат в 'temp_<random_number>.pdf'
+            os.rename(word_file.replace('.docx', '.pdf'), pdf_file)
+
+            # Отправка PDF пользователю
+            with open(pdf_file, 'rb') as pdf_file_obj:
+                await context.bot.send_document(chat_id, pdf_file_obj)
+
+            # Удаление временных файлов
+            os.remove(excel_file)
+            os.remove(word_file)
+            os.remove(pdf_file)
+
+            print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -7642,6 +7786,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие с префабами:', reply_markup=reply_markup)
 
+
+    elif data == 'generate_report_today':
+        chat_id = query.message.chat.id
+        # Удаление кнопок и изменение текста на "Создание отчета, подождите..."
+
+        await query.message.edit_text("Создание отчета, подождите...", reply_markup=None)
+        # Запуск процесса создания отчета
+        await report_today_pdf(chat_id, context)
 
     elif data == 'view_prefabs':
         await query.message.delete()
