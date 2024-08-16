@@ -7904,15 +7904,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif data == 'prefabsoptionlist':
         await query.message.delete()
         keyboard = [
+            [InlineKeyboardButton("📄 Отчеты", callback_data='reportmenuprefab')],
             [InlineKeyboardButton("🏭 Просмотр завода", callback_data='view_prefabs')],
             [InlineKeyboardButton("📦 Площадка", callback_data='placespace')],
             [InlineKeyboardButton("🔩 Монтаж", callback_data='montage')],
-            [InlineKeyboardButton("📄 Отчет за сегодня", callback_data='generate_report_today')],
-            [InlineKeyboardButton("📅 Отчет на определенный день", callback_data='generate_report_specific_day')],
             [InlineKeyboardButton("Назад", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text('Выберите действие с префабами:', reply_markup=reply_markup)
+
+
+    elif data == 'reportmenuprefab':
+        await query.message.delete()
+        keyboard = [
+            [InlineKeyboardButton("📄 Отчет за сегодня", callback_data='generate_report_today')],
+            [InlineKeyboardButton("📅 Отчет на определенный день", callback_data='generate_report_specific_day')],
+            [InlineKeyboardButton("Назад", callback_data='prefabsoptionlist')]
+
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text('Выберите вид отчета:', reply_markup=reply_markup)
+
 
     elif data == 'generate_report_specific_day':
         await query.message.delete()
