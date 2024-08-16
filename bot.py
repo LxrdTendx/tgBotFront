@@ -4978,7 +4978,7 @@ async def handle_accept_stock_quantity(update: Update, context: ContextTypes.DEF
         prefab_subtype_name = requests.get(f'{DJANGO_API_URL}prefab_subtypes/{prefab_subtype_id}/').json().get('name')
 
         if current_quantity <= update_quantity_remaining:
-            update_data = {'status': new_status}
+            update_data = {'status': new_status, 'stock_date': datetime.now().isoformat()}
             if not remark:
                 update_data['warehouse_id'] = warehouse_id
 
@@ -5018,6 +5018,7 @@ async def handle_accept_stock_quantity(update: Update, context: ContextTypes.DEF
                     'production_date': prefab['production_date'],
                     'sgp_date': prefab['sgp_date'],
                     'shipping_date': prefab['shipping_date'],
+                    'stock_date': datetime.now().isoformat()
                 }
                 if not remark:
                     new_prefabs_in_work_data['warehouse_id'] = warehouse_id
@@ -5463,7 +5464,8 @@ async def handle_select_floor(query: Update, context: ContextTypes.DEFAULT_TYPE)
                 'warehouse_id': prefab_in_work['warehouse_id'],
                 'production_date': prefab_in_work.get('production_date'),
                 'sgp_date': prefab_in_work.get('sgp_date'),
-                'shipping_date': prefab_in_work.get('shipping_date')
+                'shipping_date': prefab_in_work.get('shipping_date'),
+                'stock_date': prefab_in_work.get('stock_date')
 
             }
             response = requests.post(f'{DJANGO_API_URL}prefabs_in_work/', json=new_prefab_data)
@@ -6358,6 +6360,7 @@ async def report_today_pdf(chat_id, context):
 
             ### Преобразование Excel в Word с горизонтальной ориентацией
             doc = Document()
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').strftime('%d.%m.%Y')
             doc.add_heading(f'Отчет за {selected_date}', 0)
 
             # Установка альбомной ориентации для всех разделов документа
@@ -6404,7 +6407,7 @@ async def report_today_pdf(chat_id, context):
             print(f"Данные успешно сохранены в файл {word_file}")
 
             # Конвертация в PDF с помощью LibreOffice
-            pdf_file = f'temp_{random_number}.pdf'
+            pdf_file = f'Отчет_от_{selected_date}_{random_number}.pdf'
 
             if platform.system() == "Windows":
                 libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
@@ -6480,6 +6483,7 @@ async def report_specific_day_pdf(chat_id, context, selected_date):
 async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, context, selected_date):
     # Преобразование Excel в Word с горизонтальной ориентацией
     doc = Document()
+    selected_date = datetime.strptime(selected_date, '%Y-%m-%d').strftime('%d.%m.%Y')
     doc.add_heading(f'Отчет {selected_date}', 0)
 
     # Установка альбомной ориентации для всех разделов документа
@@ -6527,7 +6531,7 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
     print(f"Данные успешно сохранены в файл {word_file}")
 
     # Конвертация в PDF с помощью LibreOffice
-    pdf_file = f'temp_{random_number}.pdf'
+    pdf_file = f'Отчет_от_{selected_date}_{random_number}.pdf'
 
     if platform.system() == "Windows":
         libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
