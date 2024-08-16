@@ -6,11 +6,17 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Union
-from datetime import datetime
+from datetime import datetime, date
 import shutil
 import threading
 import time
 import logging
+from fastapi.responses import FileResponse
+from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 
 
 
@@ -233,6 +239,7 @@ class PrefabsInWork(Base):
     comments = Column(String, nullable=True)  # Поле для комментариев
     block_section_id = Column(Integer, ForeignKey("blocksections.id"), nullable=True)  # Добавлено поле block_section_id
     floor = Column(String, nullable=True)  # Добавлено поле floor
+    stock_date = Column(DateTime, nullable=True)  # Новое поле "дата монтажа"
     montage_date = Column(DateTime, nullable=True)  # Новое поле "дата монтажа"
 
     prefab = relationship("Prefab")
@@ -565,6 +572,7 @@ class PrefabsInWorkBase(BaseModel):
     block_section_id: Optional[int] = None
     floor: Optional[str] = None
     montage_date: Optional[datetime] = None
+    stock_date: Optional[datetime] = None
 
 class PrefabsInWorkCreate(PrefabsInWorkBase):
     pass
@@ -581,6 +589,7 @@ class PrefabsInWorkUpdate(BaseModel):
     block_section_id: Optional[int] = None
     floor: Optional[str] = None
     montage_date: Optional[datetime] = None
+    stock_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -1520,6 +1529,99 @@ def get_prefab_summary(chat_id: Union[str, int], object_id: int, db: Session = D
 
     return {"summary": summary}
 
+# Пример модели PrefabReportResponse
+class PrefabReportResponse(BaseModel):
+    prefab_type: str
+    production: int
+    sgp: int
+    shipment: int
+    delivery: int
+    montage: int
+
+
+@app.get("/report_today/{object_id}", response_model=List[PrefabReportResponse])
+def get_report_today(object_id: int, report_date: date = date.today(), db: Session = Depends(get_db)):
+    # Используем SQLAlchemy text для выполнения SQL-запроса
+    query = text(f"""
+        SELECT * FROM get_statuses_report(:report_date, :object_id)
+    """)
+    result = db.execute(query, {"report_date": report_date, "object_id": object_id}).fetchall()
+
+    # Преобразуем результат в список PrefabReportResponse
+    response_data = [
+        PrefabReportResponse(
+            prefab_type=row[0],
+            production=row[1],
+            sgp=row[2],
+            shipment=row[3],
+            delivery=row[4],
+            montage=row[5]
+        ) for row in result
+    ]
+
+    return response_data
+
+class WarehouseReportResponse(BaseModel):
+    prefab_subtype: str
+    prefab_type: str
+    warehouse_1: int
+    warehouse_2: int
+    warehouse_3: int
+
+@app.get("/warehouse_report/{object_id}", response_model=List[WarehouseReportResponse])
+def get_warehouse_report(object_id: int, report_date: date = date.today(), db: Session = Depends(get_db)):
+    query = text(f"""
+        SELECT * FROM get_warehouse_report(:report_date, :object_id)
+    """)
+    result = db.execute(query, {"report_date": report_date, "object_id": object_id}).fetchall()
+
+    response_data = [
+        WarehouseReportResponse(
+            prefab_subtype=row[0],
+            prefab_type=row[1],
+            warehouse_1=row[2],
+            warehouse_2=row[3],
+            warehouse_3=row[4]
+        ) for row in result
+    ]
+
+    return response_data
+
+
+class MontageReportResponse(BaseModel):
+    prefab_subtype: str
+    prefab_type: str
+    section: int
+    floor: str
+    warehouse_1: int
+    warehouse_2: int
+    warehouse_3: int
+
+@app.get("/montage_report/{object_id}", response_model=List[MontageReportResponse])
+def get_montage_report(object_id: int, report_date: date = date.today(), db: Session = Depends(get_db)):
+    query = text(f"""
+        SELECT * FROM get_montage_report(:report_date, :object_id)
+    """)
+    result = db.execute(query, {"report_date": report_date, "object_id": object_id}).fetchall()
+
+    response_data = [
+        MontageReportResponse(
+            prefab_subtype=row[0],
+            prefab_type=row[1],
+            section=row[2],
+            floor=row[3],
+            warehouse_1=row[4],
+            warehouse_2=row[5],
+            warehouse_3=row[6]
+        ) for row in result
+    ]
+
+    return response_data
+
+
+
+
+
 
 #АДМИН ПАНЕЛЬ
 from sqladmin import Admin, ModelView
@@ -1580,9 +1682,9 @@ class PrefabSubtypeAdmin(ModelView, model=PrefabSubtype):
     column_searchable_list = [PrefabSubtype.name]
 
 class PrefabsInWorkAdmin(ModelView, model=PrefabsInWork):
-    column_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.warehouse_id, PrefabsInWork.photos, PrefabsInWork.comments, PrefabsInWork.block_section_id, PrefabsInWork.floor]
-    column_sortable_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.warehouse_id, PrefabsInWork.block_section_id, PrefabsInWork.floor]
-
+    column_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date, PrefabsInWork.montage_date, PrefabsInWork.warehouse_id, PrefabsInWork.photos, PrefabsInWork.comments, PrefabsInWork.block_section_id, PrefabsInWork.floor]
+    column_sortable_list = [PrefabsInWork.id, PrefabsInWork.prefab_id, PrefabsInWork.quantity, PrefabsInWork.status, PrefabsInWork.production_date, PrefabsInWork.sgp_date, PrefabsInWork.shipping_date,PrefabsInWork.montage_date, PrefabsInWork.warehouse_id, PrefabsInWork.block_section_id, PrefabsInWork.floor]
+    column_searchable_list = [PrefabsInWork.id]
 class WarehouseAdmin(ModelView, model=Warehouse):
     column_list = [Warehouse.id, Warehouse.name]
     column_sortable_list = [Warehouse.id, Warehouse.name]
