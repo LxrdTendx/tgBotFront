@@ -126,6 +126,9 @@ class FrontTransfer(Base):
     photo_ids = Column(JSON, nullable=True, default=list)
     sender_chat_id = Column(String)
 
+    is_finish = Column(Boolean, default=False, nullable=True)
+
+
     sender = relationship("User", foreign_keys=[sender_id], back_populates="sent_transfers")
     receiver = relationship("User", foreign_keys=[receiver_id], back_populates="received_transfers")
     next_work_type = relationship("WorkType", foreign_keys=[next_work_type_id])
@@ -414,6 +417,7 @@ class FrontTransferBase(BaseModel):
     approval_at: Optional[datetime] = None
     photo_ids: Optional[List[str]] = Field(default_factory=list)
     sender_chat_id: str
+    is_finish: bool
 
 
 class FrontTransferCreate(FrontTransferBase):
