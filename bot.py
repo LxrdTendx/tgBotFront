@@ -1142,7 +1142,8 @@ async def handle_transfer_confirmation(query: Update, context: ContextTypes.DEFA
             'created_at': datetime.now().isoformat(),
             'approval_at': datetime.now().isoformat(),
             'status': 'transferred',
-            'photos': []
+            'photos': [],
+            'is_finish': True
         }
         logger.info(f"Отправка данных в API для создания передачи фронта: {json.dumps(transfer_data, indent=2)}")
         response = requests.post(f'{DJANGO_API_URL}fronttransfers/', json=transfer_data)
@@ -1421,6 +1422,7 @@ async def finalize_photo_upload(update: Update, context: ContextTypes.DEFAULT_TY
             'created_at': front_data.get('created_at'),
             'approval_at': front_data.get('approval_at'),
             'sender_chat_id': front_data.get('sender_chat_id'),
+            'is_finish': front_data.get('is_finish'),
             'photo_ids': photos,
         }
 
@@ -1854,8 +1856,9 @@ async def generate_pdf(front_id: int) -> str:
         doc.save(temp_docx_path)
         # print("Документ сохранен: ", temp_docx_path)
 
+        random_number = random.randint(10000000, 99999999)
         # Конвертация DOCX в PDF с использованием LibreOffice
-        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{receiver_name}_{approval_at}_двусторонний.pdf'
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{receiver_name}_двухсторонний_{random_number}.pdf'
         pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
 
         # Определяем команду для конвертации в зависимости от операционной системы
@@ -1940,8 +1943,9 @@ async def generate_pdf_reverse(front_id: int) -> str:
         doc.save(temp_docx_path)
         # print("Документ сохранен: ", temp_docx_path)
 
+        random_number = random.randint(10000000, 99999999)
         # Конвертация DOCX в PDF с использованием LibreOffice
-        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_двусторонний_reverse.pdf'
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_двусторонний_reverse_{random_number}.pdf'
         pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
 
         # Определяем команду для конвертации в зависимости от операционной системы
@@ -1999,7 +2003,8 @@ async def approve_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front
                 'sender_id': front['sender_id'],
                 'created_at': front['created_at'],
                 'sender_chat_id': front['sender_chat_id'],
-                'photo_ids': front['photo_ids']
+                'photo_ids': front['photo_ids'],
+                'is_finish': front['is_finish']
             }
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=update_data)
             if response.status_code == 200:
@@ -2408,8 +2413,9 @@ async def generate_pdf_triple(front_id: int) -> str:
         doc.save(temp_docx_path)
         print("Документ сохранен: ", temp_docx_path)
 
+        random_number = random.randint(10000000, 99999999)
         # Конвертация DOCX в PDF с использованием LibreOffice
-        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{sender_name}_{receiver_name}_трехсторонний.pdf'
+        pdf_output_name = f'{object_name}_{work_type}_{boss_name}_{sender_name}_{receiver_name}_трехсторонний_{random_number}.pdf'
         pdf_output_path = os.path.abspath(f'PDF_акты/{pdf_output_name}')
 
         # Определяем команду для конвертации в зависимости от операционной системы
@@ -2471,7 +2477,8 @@ async def send_to_google_sheets(front_id, action='append'):
             "I": created_at != approval_at,
             "J": organization_data['organization'],
             "K": front_transfer['remarks'],
-            "L": current_time
+            "L": current_time,
+            "M": front_transfer['is_finish']
         }
 
         async with session.post(WEBHOOK_URL, json=data) as response:
@@ -2533,6 +2540,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                 'approval_at': front['approval_at'],
                 'photo_ids': front['photo_ids'],
                 'sender_chat_id': front['sender_chat_id'],
+                'is_finish': front['is_finish']
             }
 
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=old_front_data)
@@ -2628,6 +2636,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
             'next_work_type_id': None,
             'boss_id': None,
             'photo_ids': [],
+            'is_finish': False
         }
         await query.edit_message_text(text="Создание документа, подождите...")
 
@@ -2656,6 +2665,7 @@ async def accept_front(query: Update, context: ContextTypes.DEFAULT_TYPE, front_
                 'approval_at': datetime.now().isoformat(),  # Обновляем дату
                 'photo_ids': front['photo_ids'],
                 'sender_chat_id': front['sender_chat_id'],
+                'is_finish': front['is_finish']
             }
 
             response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=old_front_data)
@@ -2861,7 +2871,7 @@ async def choose_existing_front(query: Update, context: ContextTypes.DEFAULT_TYP
             if block_section_response.status_code == 200:
                 block_section_name = block_section_response.json().get('name', "неизвестно")
 
-        button_text = f"{object_name} - {work_type_name} - {block_section_name} - {front['floor']}"
+        button_text = f"{object_name} - {work_type_name} - {block_section_name} - Этаж {front['floor']}"
         callback_data = f"existing_front_{front['id']}"
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
@@ -2886,6 +2896,9 @@ async def handle_existing_front_selection(query: Update, context: ContextTypes.D
         front_data = front_response.json()
         # Обновляем статус фронта на "transferred"
         front_data['status'] = 'transferred'
+        # front_data['is_finish'] = True  # Добавляем поле is_finish
+
+
         response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=front_data)
         logger.info(f"Ответ от API при обновлении статуса фронта: {response.status_code}, {response.text}")
 
@@ -6555,6 +6568,8 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
 
     print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
+
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -6620,6 +6635,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         keyboard = [
             [InlineKeyboardButton("\U0001F91D Передать фронт", callback_data='transfer')],
             [InlineKeyboardButton("\U0001F9F1 Принять фронт", callback_data='accept_fronts')],
+            [InlineKeyboardButton("Завершить фронт", callback_data='endfront')],
             [InlineKeyboardButton("Назад", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -6709,15 +6725,163 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response = requests.get(f'{DJANGO_API_URL}fronttransfers/?status=in_process')
         if response.status_code == 200:
             fronts = response.json()
+            print(fronts)
             # Фильтруем фронты, где пользователь является отправителем
-            user_fronts = [front for front in fronts if front['sender_chat_id'] == user_id]
+            user_fronts = [front for front in fronts if front['sender_chat_id'] == str(user_id)]
             user_has_fronts_in_object = any(front['object_id'] == object_id for front in user_fronts)
+
             if user_has_fronts_in_object:
                 await choose_existing_front(query, context, user_fronts, object_id)
             else:
                 await choose_work_type(query, context, object_id)
         else:
             await query.message.reply_text('Ошибка при получении списка фронтов. Попробуйте снова.')
+
+    elif data == 'endfront':
+        await query.message.delete()
+        # Удаление сообщения с основным меню
+        if 'main_menu_message_id' in context.user_data:
+            try:
+                await context.bot.delete_message(
+                    chat_id=query.message.chat.id,
+                    message_id=context.user_data['main_menu_message_id']
+                )
+
+            except telegram.error.BadRequest:
+                logger.warning("Message to delete not found")
+
+        response = requests.get(f'{DJANGO_API_URL}users/chat/{user_id}/')
+        if response.status_code == 200:
+            user_data = response.json()
+            organization_id = user_data.get('organization_id')
+            if not user_data['organization_id']:
+                await query.message.reply_text('Пожалуйста, выберите организацию командой /choice.')
+                return
+
+        else:
+            await query.message.reply_text('Ошибка при получении данных пользователя. Попробуйте снова.')
+            return
+
+        # Получаем данные организации
+        response_org = requests.get(f'{DJANGO_API_URL}organizations/{organization_id}/')
+        if response_org.status_code == 200:
+            organization_data = response_org.json()
+            organization_object_ids = organization_data.get('object_ids', [])
+        else:
+            await query.message.reply_text('Ошибка при получении данных организации. Попробуйте снова.')
+            return
+
+        response = requests.get(f'{DJANGO_API_URL}objects/')
+        if response.status_code == 200:
+            objects = response.json()
+
+            filtered_objects = [obj for obj in objects if obj['id'] in organization_object_ids]
+
+            if filtered_objects:
+                keyboard = [
+                    [InlineKeyboardButton(obj['name'], callback_data=f'endfrontobj_{obj["id"]}')] for obj in filtered_objects
+                ]
+                keyboard.append([InlineKeyboardButton("Назад", callback_data='main_menu')])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text('Выберите объект:', reply_markup=reply_markup)
+                context.user_data['stage'] = 'choose_object'
+            else:
+                await query.message.reply_text('Нет доступных объектов для данной организации.')
+
+        else:
+            await query.message.reply_text('Ошибка при получении списка объектов. Попробуйте снова.')
+
+    elif data.startswith('endfrontobj_'):
+        await query.message.delete()
+        user_id = query.from_user.id
+        object_id = int(query.data.split('_')[1])
+
+        # Получаем все фронты со статусом "in_process"
+        response = requests.get(f'{DJANGO_API_URL}fronttransfers/?status=in_process')
+        if response.status_code == 200:
+            fronts = response.json()
+            filtered_fronts = [front for front in fronts if
+                               front['sender_chat_id'] == str(user_id) and front['object_id'] == object_id
+                               and front['is_finish'] == False]
+
+            if not filtered_fronts:
+                await query.message.reply_text("Нет фронтов для завершения на выбранном объекте.")
+                return
+
+            keyboard = []
+            for front in filtered_fronts:
+                object_name = front.get('object_name', 'неизвестно')
+                work_type_name = front.get('work_type_name', 'неизвестно')
+                block_section_name = front.get('block_section_name', 'неизвестно')
+
+                if not object_name or object_name == 'неизвестно':
+                    object_response = requests.get(f'{DJANGO_API_URL}objects/{front["object_id"]}/')
+                    if object_response.status_code == 200:
+                        object_name = object_response.json().get('name', 'неизвестно')
+
+                if not work_type_name or work_type_name == 'неизвестно':
+                    work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{front["work_type_id"]}/')
+                    if work_type_response.status_code == 200:
+                        work_type_name = work_type_response.json().get('name', 'неизвестно')
+
+                if not block_section_name or block_section_name == 'неизвестно':
+                    block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{front["block_section_id"]}/')
+                    if block_section_response.status_code == 200:
+                        block_section_name = block_section_response.json().get('name', 'неизвестно')
+
+                button_text = f"{object_name} - {work_type_name} - {block_section_name} - Этаж {front['floor']}"
+                callback_data = f"endfront_{front['id']}"
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+
+            keyboard.append([InlineKeyboardButton("Назад", callback_data='endfront')])
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text("Выберите фронт для завершения работ:", reply_markup=reply_markup)
+        else:
+            await query.message.reply_text("Ошибка при получении списка фронтов. Попробуйте снова.")
+
+    elif data.startswith('endfront_'):
+        await query.message.delete()
+        front_id = int(query.data.split('_')[1])
+
+        # Получаем данные о выбранном фронте
+        front_response = requests.get(f'{DJANGO_API_URL}fronttransfers/{front_id}/')
+        if front_response.status_code == 200:
+            front_data = front_response.json()
+
+            # Обновляем статус и поле is_finish
+            front_data['is_finish'] = True
+
+            object_name = front_data.get('object_name', 'неизвестно')
+            work_type_name = front_data.get('work_type_name', 'неизвестно')
+            block_section_name = front_data.get('block_section_name', 'неизвестно')
+
+            if not object_name or object_name == 'неизвестно':
+                object_response = requests.get(f'{DJANGO_API_URL}objects/{front_data["object_id"]}/')
+                if object_response.status_code == 200:
+                    object_name = object_response.json().get('name', 'неизвестно')
+
+            if not work_type_name or work_type_name == 'неизвестно':
+                work_type_response = requests.get(f'{DJANGO_API_URL}worktypes/{front_data["work_type_id"]}/')
+                if work_type_response.status_code == 200:
+                    work_type_name = work_type_response.json().get('name', 'неизвестно')
+
+            if not block_section_name or block_section_name == 'неизвестно':
+                block_section_response = requests.get(f'{DJANGO_API_URL}blocksections/{front_data["block_section_id"]}/')
+                if block_section_response.status_code == 200:
+                    block_section_name = block_section_response.json().get('name', 'неизвестно')
+
+            # Отправляем обновленные данные на сервер
+            update_response = requests.put(f'{DJANGO_API_URL}fronttransfers/{front_id}/', json=front_data)
+
+            asyncio.create_task(send_to_google_sheets(front_id, action='update'))
+            if update_response.status_code == 200:
+                await query.message.reply_text(
+                    f"Фронт успешно завершен: {object_name} - {work_type_name} - {block_section_name} - Этаж {front_data['floor']}")
+            else:
+                await query.message.reply_text(f"Ошибка при завершении фронта. Попробуйте снова.")
+        else:
+            await query.message.reply_text("Ошибка при получении данных фронта. Попробуйте снова.")
 
 
     elif data.startswith('existing_front_'):
@@ -7069,7 +7233,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             'approval_at': datetime.now().isoformat(),
             'receiver_id': user_id,
             'boss_id': boss_id,
-            'photos': []
+            'photos': [],
+            'is_finish': False
 
         }
 
