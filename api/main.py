@@ -1483,7 +1483,8 @@ def get_prefab_summary(chat_id: Union[str, int], object_id: int, db: Session = D
         p.quantity AS prefab_quantity,
         COALESCE(SUM(CASE WHEN piw.status = 'production' THEN piw.quantity ELSE 0 END), 0) AS production_quantity,
         COALESCE(SUM(CASE WHEN piw.status = 'sgp' THEN piw.quantity ELSE 0 END), 0) AS sgp_quantity,
-        COALESCE(SUM(CASE WHEN piw.status IN ('shipment', 'stock', 'montage') THEN piw.quantity ELSE 0 END), 0) AS shipment_quantity
+        COALESCE(SUM(CASE WHEN piw.status = 'shipment' THEN piw.quantity ELSE 0 END), 0) AS shipment_quantity,
+        COALESCE(SUM(CASE WHEN piw.status IN ('stock', 'montage') THEN piw.quantity ELSE 0 END), 0) AS accepted_quantity
     FROM 
         users u
     JOIN 
@@ -1529,6 +1530,7 @@ def get_prefab_summary(chat_id: Union[str, int], object_id: int, db: Session = D
             "production_quantity": row.production_quantity,
             "sgp_quantity": row.sgp_quantity,
             "shipment_quantity": row.shipment_quantity,
+            "accepted_quantity": row.accepted_quantity  # Новое поле для "принято"
         })
 
     return {"summary": summary}

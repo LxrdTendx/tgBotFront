@@ -38,7 +38,7 @@ import os
 import random
 
 
-# Включаем логирование
+# логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -50,9 +50,11 @@ WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxg_xgttLRvUXc9nbpeqLakDo
 
 API_BASE_URL = "http://127.0.0.1:8000"
 
-# URL вашего Django API
+# URL API
 DJANGO_API_URL = 'http://127.0.0.1:8000/'
 DJANGO_MEDIA_URL = 'http://localhost:8000/api'
+
+DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
 
 # Директория для хранения фотографий
 PHOTO_DIR = 'photos'
@@ -1595,7 +1597,7 @@ async def view_front_details(query: Update, context: ContextTypes.DEFAULT_TYPE, 
             # Список InputMediaPhoto для отправки группой
             media_group = []
 
-            # Кнопка "На доработку"
+
             keyboard = [
                 [InlineKeyboardButton("\U0000274C Доработка", callback_data=f"rework_{front_id}"),
                  InlineKeyboardButton("👥 Передать", callback_data=f"transfer_{front_id}"),
@@ -1789,7 +1791,6 @@ async def handle_rework(query: Update, context: ContextTypes.DEFAULT_TYPE, front
 
 
 
-#Сделать async
 async def fetch(session, url):
     async with session.get(url) as response:
         return await response.json()
@@ -6310,6 +6311,7 @@ async def send_prefab_summary(chat_id, context: ContextTypes.DEFAULT_TYPE, objec
             f"  {STATUS_TRANSLATION.get('production', 'production')}: {prefab['production_quantity']}\n"
             f"  {STATUS_TRANSLATION.get('sgp', 'sgp')}: {prefab['sgp_quantity']}\n"
             f"  {STATUS_TRANSLATION.get('shipment', 'shipment')}: {prefab['shipment_quantity']}\n"
+            f"  принято: {prefab['accepted_quantity']}\n"  # Новое поле для принятого количества
             "\n"
         )
 
@@ -6320,14 +6322,13 @@ async def send_prefab_summary(chat_id, context: ContextTypes.DEFAULT_TYPE, objec
     )
 
 
-API_URL = "http://127.0.0.1:8000"
-DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
+
 
 
 async def report_today_pdf(chat_id, context):
     async with aiohttp.ClientSession() as session:
         # Получение object_id по chat_id
-        async with session.get(f"{API_URL}/users/chat/{chat_id}") as response:
+        async with session.get(f"{API_BASE_URL}/users/chat/{chat_id}") as response:
             if response.status != 200:
                 await context.bot.send_message(chat_id, 'Ошибка при получении данных пользователя. Попробуйте позже.')
                 return
@@ -6447,7 +6448,7 @@ async def report_today_pdf(chat_id, context):
 async def report_specific_day_pdf(chat_id, context, selected_date):
     async with aiohttp.ClientSession() as session:
         # Получение object_id по chat_id
-        async with session.get(f"{API_URL}/users/chat/{chat_id}") as response:
+        async with session.get(f"{API_BASE_URL}/users/chat/{chat_id}") as response:
             if response.status != 200:
                 await context.bot.send_message(chat_id, 'Ошибка при получении данных пользователя. Попробуйте позже.')
                 return
