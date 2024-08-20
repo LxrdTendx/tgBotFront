@@ -1033,7 +1033,12 @@ async def choose_floor(query: Update, context: ContextTypes.DEFAULT_TYPE, block_
         number_of_floors = block_section['number_of_floors']
 
         # Генерация кнопок этажей в две колонки, исключая 0
+
         keyboard = []
+        if block_section['object_id'] in [18]:
+            keyboard.append([InlineKeyboardButton('Фундамент', callback_data='floor_fund')])
+            keyboard.append([InlineKeyboardButton('Котлован', callback_data='floor_cotl')])
+
         for i in range(number_of_floors_bottom, number_of_floors + 1):
             if i == 0:
                 continue
@@ -3022,6 +3027,13 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
             floor = context.user_data['workforce_floor']
             if floor == 'roof':
                 floor = 'Кровля'
+
+            if floor == 'fund':
+                floor = 'Фундамент'
+
+            if floor == 'cotl':
+                floor = 'Котлован'
+
             work_type_id = context.user_data['workforce_work_type_id']
             organization_id = context.user_data['organization_id']
             user_id = update.message.from_user.id
@@ -3376,6 +3388,12 @@ async def handle_volume_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         floor = context.user_data['volume_floor']
         if floor == 'roof':
             floor = 'Кровля'
+
+        if floor == 'fund':
+            floor = 'Фундамент'
+
+        if floor == 'cotl':
+            floor = 'Котлован'
         work_type_id = context.user_data['volume_work_type_id']
         organization_id = context.user_data['organization_id']
         user_id = update.message.from_user.id
@@ -5380,8 +5398,13 @@ async def send_floors_list(chat_id, context: ContextTypes.DEFAULT_TYPE):
             number_of_floors_bottom = block_section['number_of_floors_bottom']
             number_of_floors = block_section['number_of_floors']
 
+
             # Генерация кнопок этажей в две колонки, исключая 0
             keyboard = []
+            if block_section['object_id'] in [18]:
+                keyboard.append([InlineKeyboardButton('Фундамент', callback_data='select_floor_fund')])
+                keyboard.append([InlineKeyboardButton('Котлован', callback_data='select_floor_cotl')])
+
             for i in range(number_of_floors_bottom, number_of_floors + 1):
                 if i == 0:
                     continue
@@ -7147,6 +7170,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             # Генерация кнопок этажей в две колонки, исключая 0
             keyboard = []
+
+            if block_section['object_id'] in [18]:
+                keyboard.append([InlineKeyboardButton('Фундамент', callback_data='issue_floor_fund')])
+                keyboard.append([InlineKeyboardButton('Котлован', callback_data='issue_floor_cotl')])
+
             for i in range(number_of_floors_bottom, number_of_floors + 1):
                 if i == 0:
                     continue
@@ -7365,6 +7393,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             # Генерация кнопок этажей в две колонки, исключая 0
             keyboard = []
+            if block_section['object_id'] in [18]:
+                keyboard.append([InlineKeyboardButton('Фундамент', callback_data='workforce_floor_fund')])
+                keyboard.append([InlineKeyboardButton('Котлован', callback_data='workforce_floor_cotl')])
+
             for i in range(number_of_floors_bottom, number_of_floors + 1):
                 if i == 0:
                     continue
@@ -7720,6 +7752,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             # Генерация кнопок этажей в две колонки, исключая 0
             keyboard = []
+
+            if block_section['object_id'] in [18]:
+                keyboard.append([InlineKeyboardButton('Фундамент', callback_data='volume_floor_fund')])
+                keyboard.append([InlineKeyboardButton('Котлован', callback_data='volume_floor_cotl')])
+
             for i in range(number_of_floors_bottom, number_of_floors + 1):
                 if i == 0:
                     continue

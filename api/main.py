@@ -11,6 +11,8 @@ import shutil
 import threading
 import time
 import logging
+from sqladmin.authentication import AuthenticationBackend
+from starlette.requests import Request
 from fastapi.responses import FileResponse
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
@@ -1633,7 +1635,30 @@ def get_montage_report(object_id: int, report_date: date = date.today(), db: Ses
 from sqladmin import Admin, ModelView
 
 # Настройка SQLAlchemy Admin
-admin = Admin(app, engine)
+
+
+class AdminAuth(AuthenticationBackend):
+    async def login(self, request: Request) -> bool:
+        form = await request.form()
+        username, password = form.get("username"), form.get("password")
+
+        # Простая проверка логина и пароля
+        if username == "brusnika" and password == "строим дома":
+            request.session.update({"authenticated": True})
+            return True
+        return False
+
+    async def logout(self, request: Request) -> bool:
+        request.session.clear()
+        return True
+
+    async def authenticate(self, request: Request) -> bool:
+        return request.session.get("authenticated", False)
+
+
+authentication_backend = AdminAuth(secret_key="ITfui7TRF7u678tF8U6JyutfUDTJFYGvuTJYTUGbi78iYGIYku")
+admin = Admin(app=app, engine=engine, authentication_backend=authentication_backend)
+
 
 # Создаем ModelView для каждой модели
 class OrganizationAdmin(ModelView, model=Organization):
