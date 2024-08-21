@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
 
 # DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
+
+
 Base = declarative_base()
 
 # Database models
@@ -1656,15 +1658,15 @@ def get_prefabs_in_work_data(db: Session = Depends(get_db)):
     for row in result:
         prefabs_data.append({
             "id": row.id,
+            "object_name": row.object_name,
+            "factory_name": row.factory_name,
             "prefab_type": row.prefab_type,
             "prefab_subtype": row.prefab_subtype,
-            "object_name": row.object_name,
             "quantity": row.quantity,
             "status": row.status,
-            "production_date": row.production_date,
-            "sgp_date": row.sgp_date,
-            "shipping_date": row.shipping_date,
-            "factory_name": row.factory_name,
+            "production_date": row.production_date.strftime('%d.%m.%Y') if row.production_date else None,
+            "sgp_date": row.sgp_date.strftime('%d.%m.%Y') if row.sgp_date else None,
+            "shipping_date": row.shipping_date.strftime('%d.%m.%Y') if row.shipping_date else None,
         })
 
     return prefabs_data
