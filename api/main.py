@@ -1629,7 +1629,45 @@ def get_montage_report(object_id: int, report_date: date = date.today(), db: Ses
 
 
 
+@app.get("/prefabs_factory/", response_model=List[dict])
+def get_prefabs_in_work_data(db: Session = Depends(get_db)):
+    query = text("""
+    SELECT 
+        id,
+        prefab_type,
+        prefab_subtype,
+        object_name,
+        quantity,
+        status,
+        production_date,
+        sgp_date,
+        shipping_date,
+        factory_name
+    FROM get_prefabs_in_work();
+    """)
 
+    result = db.execute(query).fetchall()
+
+    if not result:
+        raise HTTPException(status_code=404, detail="No data found.")
+
+    # Форматируем результат для удобного отображения
+    prefabs_data = []
+    for row in result:
+        prefabs_data.append({
+            "id": row.id,
+            "prefab_type": row.prefab_type,
+            "prefab_subtype": row.prefab_subtype,
+            "object_name": row.object_name,
+            "quantity": row.quantity,
+            "status": row.status,
+            "production_date": row.production_date,
+            "sgp_date": row.sgp_date,
+            "shipping_date": row.shipping_date,
+            "factory_name": row.factory_name,
+        })
+
+    return prefabs_data
 
 #АДМИН ПАНЕЛЬ
 from sqladmin import Admin, ModelView
