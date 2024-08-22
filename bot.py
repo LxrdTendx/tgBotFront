@@ -3102,7 +3102,7 @@ async def handle_workforce_count(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=InlineKeyboardMarkup(
                         [[InlineKeyboardButton(f"Повторить для {context.user_data['workforce_work_type_name']}",
                                                callback_data='repeat_workforce')],
-                         [InlineKeyboardButton("Назад", callback_data='main_menu')]]
+                         [InlineKeyboardButton("Назад", callback_data='workforce_menu')]]
                     )
                 )
                 # Отправка данных в Google Sheets
@@ -5581,7 +5581,7 @@ async def finalize_photo_montage(update: Update, context: ContextTypes.DEFAULT_T
         existing_photos = prefab.get('photos', [])
         all_photos = existing_photos + new_photos
 
-        update_data = {'photos': all_photos}
+        update_data = {'photos_montage': new_photos}
         response = requests.patch(f'{DJANGO_API_URL}prefabs_in_work/{prefab_id}', json=update_data)
         if response.status_code != 200:
             await update.message.reply_text('Ошибка при загрузке фотографий. Попробуйте снова.')
