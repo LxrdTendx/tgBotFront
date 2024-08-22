@@ -36,6 +36,9 @@ from docx.shared import Pt, Inches
 import subprocess
 import os
 import random
+from io import BytesIO
+from PIL import Image
+import ast
 
 
 # логирование
@@ -55,6 +58,7 @@ DJANGO_API_URL = 'http://127.0.0.1:8000/'
 DJANGO_MEDIA_URL = 'http://localhost:8000/api'
 
 DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
+bot_token = '7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M'
 
 # Директория для хранения фотографий
 PHOTO_DIR = 'photos'
@@ -6390,6 +6394,11 @@ async def report_today_pdf(chat_id, context):
                 df_montage = pd.read_sql(query_montage, conn)
                 df_montage.to_excel(writer, index=False, sheet_name='Монтаж')
 
+                ### Поставка
+                query_prefabs = f"SELECT * FROM get_prefabs_on_stock('{selected_date}', {object_id})"
+                df_prefabs = pd.read_sql(query_prefabs, conn)
+                df_prefabs.to_excel(writer, index=False, sheet_name='Поставка')
+
             # Закрытие соединения с базой данных
             conn.close()
 
@@ -6397,8 +6406,8 @@ async def report_today_pdf(chat_id, context):
 
             ### Преобразование Excel в Word с горизонтальной ориентацией
             doc = Document()
-            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').strftime('%d.%m.%Y')
-            doc.add_heading(f'Отчет за {selected_date}', 0)
+            selected_date_formatted = datetime.strptime(selected_date, '%Y-%m-%d').strftime('%d.%m.%Y')
+            doc.add_heading(f'Отчет за {selected_date_formatted}', 0)
 
             # Установка альбомной ориентации для всех разделов документа
             section = doc.sections[-1]
@@ -6438,23 +6447,86 @@ async def report_today_pdf(chat_id, context):
 
                 doc.add_paragraph()  # Разделение между таблицами
 
+            ### Добавление данных по поставке префабов с фотографиями
+            doc.add_heading('Поставка', level=1)
+
+            df_prefabs = pd.read_excel(excel_file, sheet_name='Поставка')
+
+            for i in range(df_prefabs.shape[0]):
+                # Получаем данные для строки
+                organization = df_prefabs.iat[i, 0]  # Имя Завода
+                prefab_subtype = df_prefabs.iat[i, 1]  # Подтип Префаба
+                warehouse = df_prefabs.iat[i, 2]  # Склад
+                file_id = df_prefabs.iat[i, 3]  # Фото (может быть строкой или списком)
+
+                # Формируем строку текста
+                text_line = f'{organization} "{prefab_subtype}" отгружен на "{warehouse}"'
+                doc.add_paragraph(text_line)
+
+                paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
+
+                # Проверка на наличие списка фотографий
+                if isinstance(file_id, str) and (file_id.startswith("[") and file_id.endswith("]")):
+                    file_id = ast.literal_eval(file_id)  # Преобразование строки в список
+
+                if isinstance(file_id, list):
+                    for fid in file_id:
+                        # Получаем file_path через getFile
+                        get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={fid}'
+                        response = requests.get(get_file_url)
+                        result = response.json()
+
+                        if result['ok']:
+                            file_path = result['result']['file_path']
+                            download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                            image_response = requests.get(download_url)
+
+                            # Открытие изображения и вставка в Word
+                            image_stream = BytesIO(image_response.content)
+                            image = Image.open(image_stream)
+                            image_filename = f'image_{i}_{fid}.jpg'
+                            image.save(image_filename)
+                            run = paragraph.add_run()
+                            run.add_picture(image_filename, width=Inches(2))
+
+                            os.remove(image_filename)
+
+                elif file_id:  # Если это одиночный идентификатор
+                    get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}'
+                    response = requests.get(get_file_url)
+                    result = response.json()
+
+                    if result['ok']:
+                        file_path = result['result']['file_path']
+                        download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                        image_response = requests.get(download_url)
+
+                        # Открытие изображения и вставка в Word
+                        image_stream = BytesIO(image_response.content)
+                        image = Image.open(image_stream)
+                        image_filename = f'image_{i}.jpg'
+                        image.save(image_filename)
+                        run = paragraph.add_run()
+                        run.add_picture(image_filename, width=Inches(2))
+
+                        os.remove(image_filename)
+
             # Сохранение Word-документа
             word_file = f'report_{random_number}.docx'
             doc.save(word_file)
             print(f"Данные успешно сохранены в файл {word_file}")
 
             # Конвертация в PDF с помощью LibreOffice
-            pdf_file = f'Отчет_от_{selected_date}_{random_number}.pdf'
+            pdf_file = f'Отчет_от_{selected_date_formatted}_{random_number}.pdf'
 
             if platform.system() == "Windows":
                 libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
             else:
                 libreoffice_path = "libreoffice"  # для Linux предполагается, что LibreOffice доступен в PATH
 
-
             subprocess.run([libreoffice_path, '--headless', '--convert-to', 'pdf', word_file])
 
-            # Переименовать результат в 'temp_<random_number>.pdf'
+            # Переименовать результат в pdf_file
             os.rename(word_file.replace('.docx', '.pdf'), pdf_file)
 
             # Отправка PDF пользователю
@@ -6508,6 +6580,11 @@ async def report_specific_day_pdf(chat_id, context, selected_date):
                 df_montage = pd.read_sql(query_montage, conn)
                 df_montage.to_excel(writer, index=False, sheet_name='Монтаж')
 
+                ### Поставка
+                query_prefabs = f"SELECT * FROM get_prefabs_on_stock('{selected_date}', {object_id})"
+                df_prefabs = pd.read_sql(query_prefabs, conn)
+                df_prefabs.to_excel(writer, index=False, sheet_name='Поставка')
+
             # Закрытие соединения с базой данных
             conn.close()
 
@@ -6531,7 +6608,9 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
 
     # Чтение каждого листа из Excel-файла и добавление его в Word-документ
     excel_workbook = load_workbook(excel_file)
-    for sheet_name in excel_workbook.sheetnames:
+
+    # Добавляем только таблицы без раздела "Поставка"
+    for sheet_name in ['Статусы', 'Площадка', 'Монтаж']:
         df = pd.read_excel(excel_file, sheet_name=sheet_name)
         doc.add_heading(sheet_name, level=1)
 
@@ -6562,6 +6641,70 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
 
         doc.add_paragraph()  # Разделение между таблицами
 
+    ### Добавление данных по поставке префабов с фотографиями
+    doc.add_heading('Поставка', level=1)
+
+    df_prefabs = pd.read_excel(excel_file, sheet_name='Поставка')
+
+    for i in range(df_prefabs.shape[0]):
+        # Получаем данные для строки
+        organization = df_prefabs.iat[i, 0]  # Имя Завода
+        prefab_subtype = df_prefabs.iat[i, 1]  # Подтип Префаба
+        warehouse = df_prefabs.iat[i, 2]  # Склад
+        file_id = df_prefabs.iat[i, 3]  # Фото (может быть строкой или списком)
+
+        # Формируем строку текста
+        text_line = f'{organization} "{prefab_subtype}" отгружен на "{warehouse}"'
+        doc.add_paragraph(text_line)
+
+        paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
+
+        # Проверка на наличие списка фотографий
+        if isinstance(file_id, str) and (file_id.startswith("[") and file_id.endswith("]")):
+            file_id = ast.literal_eval(file_id)  # Преобразование строки в список
+
+        if isinstance(file_id, list):
+            for fid in file_id:
+                # Получаем file_path через getFile
+                get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={fid}'
+                response = requests.get(get_file_url)
+                result = response.json()
+
+                if result['ok']:
+                    file_path = result['result']['file_path']
+                    download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                    image_response = requests.get(download_url)
+
+                    # Открытие изображения и вставка в Word
+                    image_stream = BytesIO(image_response.content)
+                    image = Image.open(image_stream)
+                    image_filename = f'image_{i}_{fid}.jpg'
+                    image.save(image_filename)
+                    run = paragraph.add_run()
+                    run.add_picture(image_filename, width=Inches(2))
+
+                    os.remove(image_filename)
+
+        elif file_id:  # Если это одиночный идентификатор
+            get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}'
+            response = requests.get(get_file_url)
+            result = response.json()
+
+            if result['ok']:
+                file_path = result['result']['file_path']
+                download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                image_response = requests.get(download_url)
+
+                # Открытие изображения и вставка в Word
+                image_stream = BytesIO(image_response.content)
+                image = Image.open(image_stream)
+                image_filename = f'image_{i}.jpg'
+                image.save(image_filename)
+                run = paragraph.add_run()
+                run.add_picture(image_filename, width=Inches(2))
+
+                os.remove(image_filename)
+
     # Сохранение Word-документа
     word_file = f'report_{random_number}.docx'
     doc.save(word_file)
@@ -6591,7 +6734,6 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
     os.remove(pdf_file)
 
     print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
-
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
