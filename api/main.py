@@ -248,6 +248,7 @@ class PrefabsInWork(Base):
     floor = Column(String, nullable=True)  # Добавлено поле floor
     stock_date = Column(DateTime, nullable=True)  # Новое поле "дата монтажа"
     montage_date = Column(DateTime, nullable=True)  # Новое поле "дата монтажа"
+    photos_montage = Column(JSON, nullable=True, default=list)  # Добавлено поле photos
 
     prefab = relationship("Prefab")
     warehouse = relationship("Warehouse", back_populates="prefabs_in_work")
@@ -581,6 +582,7 @@ class PrefabsInWorkBase(BaseModel):
     floor: Optional[str] = None
     montage_date: Optional[datetime] = None
     stock_date: Optional[datetime] = None
+    photos_montage: Optional[List[str]] = Field(default_factory=list)
 
 class PrefabsInWorkCreate(PrefabsInWorkBase):
     pass
@@ -598,6 +600,7 @@ class PrefabsInWorkUpdate(BaseModel):
     floor: Optional[str] = None
     montage_date: Optional[datetime] = None
     stock_date: Optional[datetime] = None
+    photos_montage: Optional[List[str]] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
