@@ -6399,10 +6399,15 @@ async def report_today_pdf(chat_id, context):
                 df_prefabs = pd.read_sql(query_prefabs, conn)
                 df_prefabs.to_excel(writer, index=False, sheet_name='Поставка')
 
+                ### Факт монтаж (новый блок)
+                query_photo_montage = f"SELECT * FROM get_photo_montage('{selected_date}', {object_id})"
+                df_photo_montage = pd.read_sql(query_photo_montage, conn)
+                df_photo_montage.to_excel(writer, index=False, sheet_name='Факт монтаж')
+
             # Закрытие соединения с базой данных
             conn.close()
 
-            print(f"Данные успешно сохранены в файл {excel_file}")
+            # print(f"Данные успешно сохранены в файл {excel_file}")
 
             ### Преобразование Excel в Word с горизонтальной ориентацией
             doc = Document()
@@ -6449,9 +6454,7 @@ async def report_today_pdf(chat_id, context):
 
             ### Добавление данных по поставке префабов с фотографиями
             doc.add_heading('Поставка', level=1)
-
             df_prefabs = pd.read_excel(excel_file, sheet_name='Поставка')
-
             for i in range(df_prefabs.shape[0]):
                 # Получаем данные для строки
                 organization = df_prefabs.iat[i, 0]  # Имя Завода
@@ -6511,10 +6514,72 @@ async def report_today_pdf(chat_id, context):
 
                         os.remove(image_filename)
 
+            ### Факт монтаж
+            doc.add_heading('Факт монтаж', level=1)
+            df_photo_montage = pd.read_excel(excel_file, sheet_name='Факт монтаж')
+            for i in range(df_photo_montage.shape[0]):
+                # Получаем данные для строки
+                prefab_subtype = df_photo_montage.iat[i, 0]  # Подвид префаба
+                section = df_photo_montage.iat[i, 1]  # Секция
+                floor = df_photo_montage.iat[i, 2]  # Этаж
+                file_id = df_photo_montage.iat[i, 3]  # Фотографии монтажа (может быть строкой или списком)
+
+                # Формируем строку текста
+                text_line = f'{prefab_subtype} — {section}" этаж: {floor}'
+                doc.add_paragraph(text_line)
+
+                paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
+
+                # Проверка на наличие списка фотографий
+                if isinstance(file_id, str) and (file_id.startswith("[") and file_id.endswith("]")):
+                    file_id = ast.literal_eval(file_id)  # Преобразование строки в список
+
+                if isinstance(file_id, list):
+                    for fid in file_id:
+                        # Получаем file_path через getFile
+                        get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={fid}'
+                        response = requests.get(get_file_url)
+                        result = response.json()
+
+                        if result['ok']:
+                            file_path = result['result']['file_path']
+                            download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                            image_response = requests.get(download_url)
+
+                            # Открытие изображения и вставка в Word
+                            image_stream = BytesIO(image_response.content)
+                            image = Image.open(image_stream)
+                            image_filename = f'image_montage_{i}_{fid}.jpg'
+                            image.save(image_filename)
+                            run = paragraph.add_run()
+                            run.add_picture(image_filename, width=Inches(2))
+
+                            os.remove(image_filename)
+
+                elif file_id:  # Если это одиночный идентификатор
+                    get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}'
+                    response = requests.get(get_file_url)
+                    result = response.json()
+
+                    if result['ok']:
+                        file_path = result['result']['file_path']
+                        download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                        image_response = requests.get(download_url)
+
+                        # Открытие изображения и вставка в Word
+                        image_stream = BytesIO(image_response.content)
+                        image = Image.open(image_stream)
+                        image_filename = f'image_montage_{i}.jpg'
+                        image.save(image_filename)
+                        run = paragraph.add_run()
+                        run.add_picture(image_filename, width=Inches(2))
+
+                        os.remove(image_filename)
+
             # Сохранение Word-документа
             word_file = f'report_{random_number}.docx'
             doc.save(word_file)
-            print(f"Данные успешно сохранены в файл {word_file}")
+            # print(f"Данные успешно сохранены в файл {word_file}")
 
             # Конвертация в PDF с помощью LibreOffice
             pdf_file = f'Отчет_от_{selected_date_formatted}_{random_number}.pdf'
@@ -6538,7 +6603,7 @@ async def report_today_pdf(chat_id, context):
             os.remove(word_file)
             os.remove(pdf_file)
 
-            print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
+            # print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
 async def report_specific_day_pdf(chat_id, context, selected_date):
     async with aiohttp.ClientSession() as session:
@@ -6584,6 +6649,11 @@ async def report_specific_day_pdf(chat_id, context, selected_date):
                 query_prefabs = f"SELECT * FROM get_prefabs_on_stock('{selected_date}', {object_id})"
                 df_prefabs = pd.read_sql(query_prefabs, conn)
                 df_prefabs.to_excel(writer, index=False, sheet_name='Поставка')
+
+                ### Факт монтаж (новый блок)
+                query_photo_montage = f"SELECT * FROM get_photo_montage('{selected_date}', {object_id})"
+                df_photo_montage = pd.read_sql(query_photo_montage, conn)
+                df_photo_montage.to_excel(writer, index=False, sheet_name='Факт монтаж')
 
             # Закрытие соединения с базой данных
             conn.close()
@@ -6705,10 +6775,75 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
 
                 os.remove(image_filename)
 
+    ### Факт монтаж
+    doc.add_heading('Факт монтаж', level=1)
+
+    df_photo_montage = pd.read_excel(excel_file, sheet_name='Факт монтаж')
+
+    for i in range(df_photo_montage.shape[0]):
+        # Получаем данные для строки
+        prefab_subtype = df_photo_montage.iat[i, 0]  # Подвид префаба
+        section = df_photo_montage.iat[i, 1]  # Секция
+        floor = df_photo_montage.iat[i, 2]  # Этаж
+        file_id = df_photo_montage.iat[i, 3]  # Фотографии монтажа (может быть строкой или списком)
+
+        # Формируем строку текста
+        text_line = f'{prefab_subtype} — {section}" этаж: {floor}'
+        doc.add_paragraph(text_line)
+
+        paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
+
+        # Проверка на наличие списка фотографий
+        if isinstance(file_id, str) and (file_id.startswith("[") and file_id.endswith("]")):
+            file_id = ast.literal_eval(file_id)  # Преобразование строки в список
+
+        if isinstance(file_id, list):
+            for fid in file_id:
+                # Получаем file_path через getFile
+                get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={fid}'
+                response = requests.get(get_file_url)
+                result = response.json()
+
+                if result['ok']:
+                    file_path = result['result']['file_path']
+                    download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                    image_response = requests.get(download_url)
+
+                    # Открытие изображения и вставка в Word
+                    image_stream = BytesIO(image_response.content)
+                    image = Image.open(image_stream)
+                    image_filename = f'image_montage_{i}_{fid}.jpg'
+                    image.save(image_filename)
+                    run = paragraph.add_run()
+                    run.add_picture(image_filename, width=Inches(2))
+
+                    os.remove(image_filename)
+
+        elif file_id:  # Если это одиночный идентификатор
+            get_file_url = f'https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}'
+            response = requests.get(get_file_url)
+            result = response.json()
+
+            if result['ok']:
+                file_path = result['result']['file_path']
+                download_url = f'https://api.telegram.org/file/bot{bot_token}/{file_path}'
+                image_response = requests.get(download_url)
+
+                # Открытие изображения и вставка в Word
+                image_stream = BytesIO(image_response.content)
+                image = Image.open(image_stream)
+                image_filename = f'image_montage_{i}.jpg'
+                image.save(image_filename)
+                run = paragraph.add_run()
+                run.add_picture(image_filename, width=Inches(2))
+
+                os.remove(image_filename)
+
+
     # Сохранение Word-документа
     word_file = f'report_{random_number}.docx'
     doc.save(word_file)
-    print(f"Данные успешно сохранены в файл {word_file}")
+    # print(f"Данные успешно сохранены в файл {word_file}")
 
     # Конвертация в PDF с помощью LibreOffice
     pdf_file = f'Отчет_от_{selected_date}_{random_number}.pdf'
@@ -6733,7 +6868,7 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
     os.remove(word_file)
     os.remove(pdf_file)
 
-    print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
+    # print(f"Файл {pdf_file} успешно отправлен и временные файлы удалены")
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -8318,6 +8453,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         selected_date = datetime(2024, month, day).strftime('%Y-%m-%d')
 
         # Теперь можно использовать функцию для создания отчета, передав выбранную дату
+        # asyncio.create_task(report_specific_day_pdf(chat_id=query.message.chat_id, context=context, selected_date=selected_date))
         await report_specific_day_pdf(chat_id=query.message.chat_id, context=context, selected_date=selected_date)
 
 
@@ -8327,6 +8463,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await query.message.edit_text("Создание отчета, подождите...", reply_markup=None)
         # Запуск процесса создания отчета
+
+        # asyncio.create_task(report_today_pdf(chat_id, context))
         await report_today_pdf(chat_id, context)
 
     elif data == 'view_prefabs':
