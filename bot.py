@@ -8662,11 +8662,11 @@ def main() -> None:
 
 
     #оригинальный
-    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
+    # application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
 
 
     #тестовый
-    # application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
+    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
 
 
     application.add_handler(CommandHandler("info", welcome_message))
