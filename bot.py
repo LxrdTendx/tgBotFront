@@ -6525,7 +6525,7 @@ async def report_today_pdf(chat_id, context):
                 file_id = df_photo_montage.iat[i, 3]  # Фотографии монтажа (может быть строкой или списком)
 
                 # Формируем строку текста
-                text_line = f'{prefab_subtype} — {section}" этаж: {floor}'
+                text_line = f'{prefab_subtype} — {section} этаж: {floor}'
                 doc.add_paragraph(text_line)
 
                 paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
@@ -6788,7 +6788,7 @@ async def convert_excel_to_pdf_and_send(excel_file, random_number, chat_id, cont
         file_id = df_photo_montage.iat[i, 3]  # Фотографии монтажа (может быть строкой или списком)
 
         # Формируем строку текста
-        text_line = f'{prefab_subtype} — {section}" этаж: {floor}'
+        text_line = f'{prefab_subtype} — {section} этаж: {floor}'
         doc.add_paragraph(text_line)
 
         paragraph = doc.add_paragraph()  # Создаем новый параграф для добавления фотографий
@@ -8662,11 +8662,11 @@ def main() -> None:
 
 
     #оригинальный
-    application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
+    # application = Application.builder().token("7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M").build()
 
 
     #тестовый
-    # application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
+    application = Application.builder().token("7313015944:AAGpc2o5qF3rnYph_xRKUWNKaSjedPog1bs").build()
 
 
     application.add_handler(CommandHandler("info", welcome_message))
