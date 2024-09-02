@@ -31,9 +31,6 @@ logger = logging.getLogger(__name__)
 # DATABASE_URL = "postgresql://postgres:12345@localhost:5432/tgfrontbrusnika"
 DATABASE_URL = "postgresql://postgres:qwerty22375638@localhost:5432/tgfrontbrusnika"
 
-# DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
-
-
 Base = declarative_base()
 
 # Database models
