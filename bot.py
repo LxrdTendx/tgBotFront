@@ -55,9 +55,7 @@ API_BASE_URL = "http://127.0.0.1:8000"
 
 # URL API
 DJANGO_API_URL = 'http://127.0.0.1:8000/'
-DJANGO_MEDIA_URL = 'http://localhost:8000/api'
-
-DATABASE_URL = "postgresql://postgres:qwerty22375638@176.123.163.235:5432/tgfrontbrusnika"
+DJANGO_MEDIA_URL 
 bot_token = '7363654158:AAFfqLnieUtbqgpoKnTH0TAQajNRa4xjg-M'
 
 # Директория для хранения фотографий
